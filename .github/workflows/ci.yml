@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # bankferry runs on Windows: the security-key path calls webauthn.dll, which
+  # exists only there. So CI tests on Windows, with no bank linked and no key
+  # present. That is what the fakes are for: a fake authenticator reaches every
+  # function the real key guards, and the keyring and Plaid clients are exercised
+  # through mocks, so the suite is hermetic.
+  test:
+    name: test
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
