@@ -1,5 +1,11 @@
-// Package ofx generates OFX 2.2 XML documents for bank and credit card
-// statements. It supports checking/savings and credit card accounts.
+// Package ofx writes and reads OFX 2.2 XML documents for bank and credit card
+// statements (checking, savings, money market, and credit card accounts).
+//
+// Read is the inverse of Write, not a general OFX 2.2 parser: it expects the
+// aggregates Write produces and treats the statement dates and LEDGERBAL as
+// mandatory. It tolerates the common OFX datetime and timezone forms in date
+// fields but keeps only the calendar date. Pointing it at an arbitrary
+// bank-exported .ofx is outside what it promises.
 package ofx
 
 import (
@@ -104,7 +110,7 @@ type Statement struct {
 	Org        string // financial institution name
 	FID        string // financial institution ID
 
-	// Exactly one of these should be set.
+	// Exactly one of these must be set; Write rejects both-nil and both-set.
 	Bank       *BankStatement
 	CreditCard *CreditCardStatement
 }
@@ -114,12 +120,41 @@ func ofxDate(d civildate.ISO8601Date) string {
 	return d.Format("20060102")
 }
 
-// xmlEscape replaces XML-sensitive characters with their entity references.
+// xmlEscape makes s safe as XML 1.0 element text. NAME, MEMO, and FITID come
+// from raw bank descriptors, so they can carry control characters the XML 1.0
+// spec forbids; those are dropped, since emitting them produces a document
+// neither Read nor GnuCash can parse. The markup-significant &, <, and > are
+// replaced with entity references. Quotes need no escaping here because
+// everything written is element text, never an attribute value.
 func xmlEscape(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return s
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if !isXMLChar(r) {
+			continue
+		}
+		switch r {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// isXMLChar reports whether r is a legal XML 1.0 character (tab, newline,
+// carriage return, and the printable ranges — everything else, notably the C0
+// control characters, is forbidden).
+func isXMLChar(r rune) bool {
+	return r == 0x09 || r == 0x0A || r == 0x0D ||
+		(r >= 0x20 && r <= 0xD7FF) ||
+		(r >= 0xE000 && r <= 0xFFFD) ||
+		(r >= 0x10000 && r <= 0x10FFFF)
 }
 
 // printer wraps an io.Writer and captures the first write error.
@@ -143,10 +178,50 @@ func (p *printer) printf(format string, args ...any) {
 	_, p.err = fmt.Fprintf(p.w, format, args...)
 }
 
+// validate rejects a Statement that would serialize to a malformed or
+// non-round-trippable document. An unset required date renders through ofxDate
+// as a nonsense "-00011130", and an empty BALAMT produces an empty required
+// element; Write refuses these rather than emit them silently.
+func validate(stmt Statement) error {
+	if stmt.ServerDate.IsZero() {
+		return errors.New("ofx: ServerDate (DTSERVER) is required")
+	}
+	switch {
+	case stmt.Bank != nil:
+		b := stmt.Bank
+		return validateBody(b.StartDate, b.EndDate, b.LedgerBal, b.Transactions)
+	case stmt.CreditCard != nil:
+		c := stmt.CreditCard
+		return validateBody(c.StartDate, c.EndDate, c.LedgerBal, c.Transactions)
+	}
+	return nil
+}
+
+func validateBody(start, end civildate.ISO8601Date, bal Balance, txns []Transaction) error {
+	if start.IsZero() || end.IsZero() {
+		return errors.New("ofx: statement DTSTART and DTEND are required")
+	}
+	if bal.Amount == "" || bal.AsOf.IsZero() {
+		return errors.New("ofx: LEDGERBAL requires both BALAMT and DTASOF")
+	}
+	for _, t := range txns {
+		if t.DatePosted.IsZero() {
+			return fmt.Errorf("ofx: transaction %q has no DTPOSTED", t.ID)
+		}
+		if t.Amount == "" {
+			return fmt.Errorf("ofx: transaction %q has no TRNAMT", t.ID)
+		}
+	}
+	return nil
+}
+
 // Write serializes the Statement as OFX 2.2 XML to the given writer.
 func Write(w io.Writer, stmt Statement) error {
-	if stmt.Bank == nil && stmt.CreditCard == nil {
-		return errors.New("ofx: statement must have either Bank or CreditCard set")
+	if (stmt.Bank == nil) == (stmt.CreditCard == nil) {
+		return errors.New("ofx: exactly one of Bank or CreditCard must be set")
+	}
+	if err := validate(stmt); err != nil {
+		return err
 	}
 
 	lang := stmt.Language
@@ -336,9 +411,16 @@ type xmlBalance struct {
 	AsOf   string `xml:"DTASOF"`
 }
 
-// parseOFXDate converts an OFX date string (YYYYMMDD) to ISO8601Date.
+// parseOFXDate converts an OFX date to an ISO8601Date. OFX dates are YYYYMMDD,
+// optionally followed by a time, fractional seconds, and a [gmt offset:zone]
+// suffix (YYYYMMDDHHMMSS.XXX[-5:EST]). The date is always the leading eight
+// digits; only that calendar date is retained.
 func parseOFXDate(s string) (civildate.ISO8601Date, error) {
-	return civildate.Parse("20060102", s)
+	s = strings.TrimSpace(s)
+	if len(s) < 8 {
+		return civildate.ISO8601Date{}, fmt.Errorf("ofx: date %q is too short", s)
+	}
+	return civildate.Parse("20060102", s[:8])
 }
 
 func convertTxns(raw []xmlTxn) ([]Transaction, error) {
@@ -361,8 +443,11 @@ func convertTxns(raw []xmlTxn) ([]Transaction, error) {
 	return txns, nil
 }
 
-// Read parses an OFX 2.2 XML document and returns the corresponding
-// Statement. It handles the XML entity-escaped content automatically.
+// Read parses an OFX 2.2 document in the shape this package writes and returns
+// the Statement; Write and Read round-trip. It is not a general OFX reader (see
+// the package comment): it expects the aggregates Write produces, treats the
+// statement dates and LEDGERBAL as mandatory, and tolerates datetime/timezone
+// suffixes on date fields while keeping only the calendar date.
 func Read(r io.Reader) (Statement, error) {
 	var raw xmlOFX
 	if err := xml.NewDecoder(r).Decode(&raw); err != nil {

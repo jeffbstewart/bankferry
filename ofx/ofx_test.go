@@ -2,12 +2,132 @@ package ofx
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeffbstewart/bankferry/civildate"
 )
+
+// validBankStatement returns a minimal Statement that Write accepts. Tests
+// break one field of it to exercise a single failure mode.
+func validBankStatement() Statement {
+	return Statement{
+		ServerDate: civildate.MustNew(2025, time.June, 15),
+		Org:        "Test Bank",
+		FID:        "1234",
+		Bank: &BankStatement{
+			Account:   BankAccount{BankID: "111", AccountID: "222", Type: Checking},
+			Currency:  "USD",
+			StartDate: civildate.MustNew(2025, time.June, 1),
+			EndDate:   civildate.MustNew(2025, time.June, 15),
+			LedgerBal: Balance{Amount: "100.00", AsOf: civildate.MustNew(2025, time.June, 15)},
+			Transactions: []Transaction{
+				{Type: TransactionDebit, DatePosted: civildate.MustNew(2025, time.June, 3), Amount: "-45.00", ID: "T1", Name: "Store"},
+			},
+		},
+	}
+}
+
+// A Statement with both Bank and CreditCard set must be refused, not have one
+// silently dropped.
+func TestWrite_RejectsBothSet(t *testing.T) {
+	s := validBankStatement()
+	s.CreditCard = &CreditCardStatement{
+		Account:   CreditCardAccount{AccountID: "999"},
+		Currency:  "USD",
+		StartDate: civildate.MustNew(2025, time.June, 1),
+		EndDate:   civildate.MustNew(2025, time.June, 15),
+		LedgerBal: Balance{Amount: "1.00", AsOf: civildate.MustNew(2025, time.June, 15)},
+	}
+	if err := Write(io.Discard, s); err == nil {
+		t.Error("expected an error when both Bank and CreditCard are set")
+	}
+}
+
+func TestWrite_RejectsNeither(t *testing.T) {
+	s := validBankStatement()
+	s.Bank = nil
+	if err := Write(io.Discard, s); err == nil {
+		t.Error("expected an error when neither Bank nor CreditCard is set")
+	}
+}
+
+// An unset required date would render as the nonsense "-00011130"; Write must
+// reject it rather than emit a document that cannot be read back.
+func TestWrite_RejectsZeroRequiredDates(t *testing.T) {
+	cases := map[string]func(*Statement){
+		"server date":  func(s *Statement) { s.ServerDate = civildate.ISO8601Date{} },
+		"end date":     func(s *Statement) { s.Bank.EndDate = civildate.ISO8601Date{} },
+		"start date":   func(s *Statement) { s.Bank.StartDate = civildate.ISO8601Date{} },
+		"balance date": func(s *Statement) { s.Bank.LedgerBal.AsOf = civildate.ISO8601Date{} },
+		"txn date":     func(s *Statement) { s.Bank.Transactions[0].DatePosted = civildate.ISO8601Date{} },
+	}
+	for name, breakField := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := validBankStatement()
+			breakField(&s)
+			if err := Write(io.Discard, s); err == nil {
+				t.Errorf("expected an error for a zero %s", name)
+			}
+		})
+	}
+}
+
+func TestWrite_RejectsEmptyRequiredAmounts(t *testing.T) {
+	cases := map[string]func(*Statement){
+		"balance amount": func(s *Statement) { s.Bank.LedgerBal.Amount = "" },
+		"txn amount":     func(s *Statement) { s.Bank.Transactions[0].Amount = "" },
+	}
+	for name, breakField := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := validBankStatement()
+			breakField(&s)
+			if err := Write(io.Discard, s); err == nil {
+				t.Errorf("expected an error for an empty %s", name)
+			}
+		})
+	}
+}
+
+// Control characters in bank-controlled text must be dropped, so the document
+// stays valid XML and round-trips.
+func TestWrite_StripsIllegalXMLChars(t *testing.T) {
+	s := validBankStatement()
+	s.Bank.Transactions[0].Name = "AC\x00ME\x07 STORE"
+	var buf bytes.Buffer
+	if err := Write(&buf, s); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := Read(&buf)
+	if err != nil {
+		t.Fatalf("Read (illegal chars leaked into the XML): %v", err)
+	}
+	if name := got.Bank.Transactions[0].Name; name != "ACME STORE" {
+		t.Errorf("Name = %q, want %q", name, "ACME STORE")
+	}
+}
+
+// Read must tolerate the OFX datetime/timezone date form a real bank export
+// uses, keeping only the calendar date.
+func TestRead_ToleratesDatetimeDates(t *testing.T) {
+	s := validBankStatement()
+	var buf bytes.Buffer
+	if err := Write(&buf, s); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	doc := strings.Replace(buf.String(),
+		"<DTSERVER>20250615</DTSERVER>",
+		"<DTSERVER>20250615120000.000[-5:EST]</DTSERVER>", 1)
+	got, err := Read(strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.ServerDate.String() != "2025-06-15" {
+		t.Errorf("ServerDate = %v, want 2025-06-15", got.ServerDate)
+	}
+}
 
 func TestOfxDate(t *testing.T) {
 	tests := []struct {
