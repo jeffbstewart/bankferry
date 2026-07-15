@@ -4,8 +4,49 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+// The rendering methods are fallible (they can overflow int64 when scaling
+// up). These helpers keep the value-oriented tests readable by failing the
+// test on an unexpected error and returning the string.
+
+func mustExact(t *testing.T, a Amount) string {
+	t.Helper()
+	s, err := a.Exact()
+	if err != nil {
+		t.Fatalf("Exact(): %v", err)
+	}
+	return s
+}
+
+func mustQuantity(t *testing.T, a Amount) string {
+	t.Helper()
+	s, err := a.Quantity()
+	if err != nil {
+		t.Fatalf("Quantity(): %v", err)
+	}
+	return s
+}
+
+func mustDisplay(t *testing.T, a Amount) string {
+	t.Helper()
+	s, err := a.Display()
+	if err != nil {
+		t.Fatalf("Display(): %v", err)
+	}
+	return s
+}
+
+func mustAccounting(t *testing.T, a Amount) string {
+	t.Helper()
+	s, err := a.Accounting()
+	if err != nil {
+		t.Fatalf("Accounting(): %v", err)
+	}
+	return s
+}
 
 // ---------------------------------------------------------------------------
 // Currency
@@ -33,6 +74,18 @@ func TestParseCurrency_RejectsOthers(t *testing.T) {
 	}
 }
 
+// The rejection message quotes the supported currency, so an unsupported code
+// reads cleanly even when it is empty or padded.
+func TestParseCurrency_MessageQuotesSupported(t *testing.T) {
+	_, err := ParseCurrency("EUR")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), `"USD"`) {
+		t.Errorf("message %q should quote the supported currency as \"USD\"", err.Error())
+	}
+}
+
 func TestCurrency_DecimalsAndSymbol(t *testing.T) {
 	if got := USD.Decimals(); got != 2 {
 		t.Errorf("USD.Decimals() = %d, want 2", got)
@@ -47,10 +100,10 @@ func TestCurrency_Zero(t *testing.T) {
 	if !z.IsZero() {
 		t.Error("USD.Zero() is not zero")
 	}
-	if !z.Is(USD) {
+	if !z.CurrencyIs(USD) {
 		t.Error("USD.Zero() is not denominated in USD")
 	}
-	if got := z.Exact(); got != "0.00" {
+	if got := mustExact(t, z); got != "0.00" {
 		t.Errorf("USD.Zero().Exact() = %q, want 0.00", got)
 	}
 }
@@ -87,8 +140,8 @@ func TestParse_Exact(t *testing.T) {
 			t.Errorf("Parse(%q): %v", tc.in, err)
 			continue
 		}
-		if got.Exact() != tc.want {
-			t.Errorf("Parse(%q).Exact() = %q, want %q", tc.in, got.Exact(), tc.want)
+		if e := mustExact(t, got); e != tc.want {
+			t.Errorf("Parse(%q).Exact() = %q, want %q", tc.in, e, tc.want)
 		}
 	}
 }
@@ -115,8 +168,8 @@ func TestParse_Exponents(t *testing.T) {
 			t.Errorf("Parse(%q): %v", tc.in, err)
 			continue
 		}
-		if got.Exact() != tc.want {
-			t.Errorf("Parse(%q).Exact() = %q, want %q", tc.in, got.Exact(), tc.want)
+		if e := mustExact(t, got); e != tc.want {
+			t.Errorf("Parse(%q).Exact() = %q, want %q", tc.in, e, tc.want)
 		}
 	}
 }
@@ -153,7 +206,7 @@ func TestParse_RequiresCurrency(t *testing.T) {
 // Exact must never round. A four-decimal balance keeps four decimals.
 func TestExact_NeverRounds(t *testing.T) {
 	a := MustParse("23631.9805", USD)
-	if got := a.Exact(); got != "23631.9805" {
+	if got := mustExact(t, a); got != "23631.9805" {
 		t.Errorf("Exact() = %q, want 23631.9805", got)
 	}
 }
@@ -177,13 +230,13 @@ func TestFormatters(t *testing.T) {
 	}
 	for _, tc := range cases {
 		a := MustParse(tc.in, USD)
-		if got := a.Quantity(); got != tc.quantity {
+		if got := mustQuantity(t, a); got != tc.quantity {
 			t.Errorf("Parse(%q).Quantity() = %q, want %q", tc.in, got, tc.quantity)
 		}
-		if got := a.Display(); got != tc.display {
+		if got := mustDisplay(t, a); got != tc.display {
 			t.Errorf("Parse(%q).Display() = %q, want %q", tc.in, got, tc.display)
 		}
-		if got := a.Accounting(); got != tc.accounting {
+		if got := mustAccounting(t, a); got != tc.accounting {
 			t.Errorf("Parse(%q).Accounting() = %q, want %q", tc.in, got, tc.accounting)
 		}
 	}
@@ -206,18 +259,64 @@ func TestQuantity_RoundsHalfAwayFromZero(t *testing.T) {
 	}
 	for _, tc := range cases {
 		a := MustParse(tc.in, USD)
-		if got := a.Quantity(); got != tc.want {
+		if got := mustQuantity(t, a); got != tc.want {
 			t.Errorf("Parse(%q).Quantity() = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// Scaling down from the maximum precision must land on a valid power-of-ten
+// divisor and round cleanly, exercising the scale-down path.
+func TestQuantity_ScaleDownFromMaxPrecision(t *testing.T) {
+	if got := mustQuantity(t, MustParse("0.000000001", USD)); got != "0.00" {
+		t.Errorf("Quantity() = %q, want 0.00", got)
+	}
+	if got := mustQuantity(t, MustParse("0.994999999", USD)); got != "0.99" {
+		t.Errorf("Quantity() = %q, want 0.99", got)
 	}
 }
 
 // The value itself is untouched by a rounded rendering.
 func TestQuantity_DoesNotMutate(t *testing.T) {
 	a := MustParse("23631.9805", USD)
-	_ = a.Quantity()
-	if got := a.Exact(); got != "23631.9805" {
+	_, _ = a.Quantity()
+	if got := mustExact(t, a); got != "23631.9805" {
 		t.Errorf("Exact() after Quantity() = %q, want 23631.9805", got)
+	}
+}
+
+// An amount near the int64 ceiling cannot be padded or rescaled to two
+// decimals without overflowing. Every renderer that multiplies must report
+// that as an error, never a truncated or wrapped value.
+func TestRender_OverflowIsAnError(t *testing.T) {
+	huge, err := New(math.MaxInt64, 0, USD)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := huge.Exact(); !errors.Is(err, ErrRange) {
+		t.Errorf("Exact() err = %v, want ErrRange", err)
+	}
+	if _, err := huge.Quantity(); !errors.Is(err, ErrRange) {
+		t.Errorf("Quantity() err = %v, want ErrRange", err)
+	}
+	if _, err := huge.Display(); !errors.Is(err, ErrRange) {
+		t.Errorf("Display() err = %v, want ErrRange", err)
+	}
+	if _, err := huge.Accounting(); !errors.Is(err, ErrRange) {
+		t.Errorf("Accounting() err = %v, want ErrRange", err)
+	}
+}
+
+// String satisfies fmt.Stringer and so cannot error; on the pathological
+// overflow it falls back to the exact stored digits rather than a wrong value.
+func TestString_DegradesOnOverflow(t *testing.T) {
+	huge, err := New(math.MaxInt64, 0, USD)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := "$" + strconv.FormatInt(math.MaxInt64, 10)
+	if got := huge.String(); got != want {
+		t.Errorf("String() = %q, want %q", got, want)
 	}
 }
 
@@ -233,14 +332,14 @@ func TestNeg(t *testing.T) {
 		{"23631.9805", "-23631.9805"},
 	}
 	for _, tc := range cases {
-		if got := MustParse(tc.in, USD).Neg().Exact(); got != tc.want {
+		if got := mustExact(t, MustParse(tc.in, USD).Neg()); got != tc.want {
 			t.Errorf("Parse(%q).Neg().Exact() = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
 
 func TestNeg_PreservesCurrency(t *testing.T) {
-	if !MustParse("1.00", USD).Neg().Is(USD) {
+	if !MustParse("1.00", USD).Neg().CurrencyIs(USD) {
 		t.Error("Neg() dropped the currency")
 	}
 }
@@ -273,13 +372,13 @@ func TestEqual_IgnoresScale(t *testing.T) {
 	}
 }
 
-func TestIs(t *testing.T) {
+func TestCurrencyIs(t *testing.T) {
 	a := MustParse("1.00", USD)
-	if !a.Is(USD) {
-		t.Error("Is(USD) should be true")
+	if !a.CurrencyIs(USD) {
+		t.Error("CurrencyIs(USD) should be true")
 	}
-	if a.Is(Currency("EUR")) {
-		t.Error("Is(EUR) should be false")
+	if a.CurrencyIs(Currency("EUR")) {
+		t.Error("CurrencyIs(EUR) should be false")
 	}
 }
 
@@ -305,10 +404,10 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if got := a.Exact(); got != "-45.00" {
+	if got := mustExact(t, a); got != "-45.00" {
 		t.Errorf("Exact() = %q, want -45.00", got)
 	}
-	if got := a.Display(); got != "-$45.00" {
+	if got := mustDisplay(t, a); got != "-$45.00" {
 		t.Errorf("Display() = %q, want -$45.00", got)
 	}
 }
@@ -322,6 +421,22 @@ func TestNew_RejectsBadScaleAndCurrency(t *testing.T) {
 	}
 }
 
+// math.MinInt64 is excluded so Neg and render can stay infallible: -MinInt64
+// overflows int64.
+func TestNew_RejectsMinInt64(t *testing.T) {
+	if _, err := New(math.MinInt64, 2, USD); !errors.Is(err, ErrRange) {
+		t.Errorf("err = %v, want ErrRange", err)
+	}
+	// One above the floor is fine, and negating it cannot overflow.
+	a, err := New(math.MinInt64+1, 0, USD)
+	if err != nil {
+		t.Fatalf("New(MinInt64+1): %v", err)
+	}
+	if got := a.Neg().units; got != math.MaxInt64 {
+		t.Errorf("Neg().units = %d, want MaxInt64", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Round trip
 // ---------------------------------------------------------------------------
@@ -331,9 +446,9 @@ func TestNew_RejectsBadScaleAndCurrency(t *testing.T) {
 func TestRoundTrip_PlaidLiterals(t *testing.T) {
 	for _, lit := range []string{"89.4", "12", "-500", "-4.22", "23631.9805", "6.33", "5.4", "4.33"} {
 		a := MustParse(lit, USD)
-		b := MustParse(a.Exact(), USD)
+		b := MustParse(mustExact(t, a), USD)
 		if !a.Equal(b) {
-			t.Errorf("%q did not survive a round trip: %q", lit, a.Exact())
+			t.Errorf("%q did not survive a round trip: %q", lit, mustExact(t, a))
 		}
 	}
 }

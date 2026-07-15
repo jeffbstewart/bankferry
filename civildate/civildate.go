@@ -17,9 +17,29 @@ type ISO8601Date struct {
 	day   int
 }
 
-// New creates an ISO8601Date from explicit year, month, and day values.
-func New(year int, month time.Month, day int) ISO8601Date {
-	return ISO8601Date{year: year, month: month, day: day}
+// New creates an ISO8601Date from explicit year, month, and day values,
+// rejecting any triple that is not a real calendar date — a month outside
+// 1..12, or a day outside that month's range, including nonsense like a
+// negative or billion-valued day. It validates by round-tripping through
+// time.Date, which normalizes out-of-range fields, and refusing any input the
+// normalization would have altered.
+func New(year int, month time.Month, day int) (ISO8601Date, error) {
+	t := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	if t.Year() != year || t.Month() != month || t.Day() != day {
+		return ISO8601Date{}, fmt.Errorf("civildate: %d-%02d-%02d is not a valid calendar date", year, int(month), day)
+	}
+	return ISO8601Date{year: year, month: month, day: day}, nil
+}
+
+// MustNew is New for dates known to be valid — test fixtures and package-level
+// constants. It panics on an invalid date, so it must never be handed values
+// that originate outside the program.
+func MustNew(year int, month time.Month, day int) ISO8601Date {
+	d, err := New(year, month, day)
+	if err != nil {
+		panic(err)
+	}
+	return d
 }
 
 // FromTime extracts the calendar date from a time.Time, discarding
@@ -34,7 +54,10 @@ func Today() ISO8601Date {
 	return FromTime(time.Now())
 }
 
-// Parse parses a date string using the given Go time layout.
+// Parse parses a date string using the given Go time layout. An out-of-range
+// date such as "2025-13-01" or "2025-02-30" is rejected: time.Parse validates
+// the fields against the layout and returns an error rather than normalizing,
+// so Parse never yields a date the calendar does not contain.
 func Parse(layout, value string) (ISO8601Date, error) {
 	t, err := time.Parse(layout, value)
 	if err != nil {
@@ -78,6 +101,12 @@ func (d ISO8601Date) String() string {
 // Format returns the date formatted using the given Go time layout.
 func (d ISO8601Date) Format(layout string) string {
 	return time.Date(d.year, d.month, d.day, 0, 0, 0, 0, time.UTC).Format(layout)
+}
+
+// MarshalJSON renders the date as a JSON string in "YYYY-MM-DD" format, the
+// inverse of UnmarshalJSON.
+func (d ISO8601Date) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.String())
 }
 
 // UnmarshalJSON parses a JSON string in "YYYY-MM-DD" format.

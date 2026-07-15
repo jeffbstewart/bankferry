@@ -11,7 +11,7 @@ func TestIsZero(t *testing.T) {
 	if !zero.IsZero() {
 		t.Error("zero value should report IsZero")
 	}
-	if New(2025, time.March, 15).IsZero() {
+	if MustNew(2025, time.March, 15).IsZero() {
 		t.Error("a real date should not report IsZero")
 	}
 	if FromTime(time.Now()).IsZero() {
@@ -25,14 +25,14 @@ func TestCompare(t *testing.T) {
 		a, b ISO8601Date
 		want int
 	}{
-		{"equal", New(2025, time.June, 3), New(2025, time.June, 3), 0},
-		{"earlier day", New(2025, time.June, 3), New(2025, time.June, 4), -1},
-		{"later day", New(2025, time.June, 4), New(2025, time.June, 3), 1},
-		{"earlier month", New(2025, time.May, 31), New(2025, time.June, 1), -1},
-		{"later month", New(2025, time.July, 1), New(2025, time.June, 30), 1},
-		{"earlier year", New(2024, time.December, 31), New(2025, time.January, 1), -1},
-		{"later year", New(2026, time.January, 1), New(2025, time.December, 31), 1},
-		{"year beats day", New(2024, time.December, 31), New(2025, time.January, 1), -1},
+		{"equal", MustNew(2025, time.June, 3), MustNew(2025, time.June, 3), 0},
+		{"earlier day", MustNew(2025, time.June, 3), MustNew(2025, time.June, 4), -1},
+		{"later day", MustNew(2025, time.June, 4), MustNew(2025, time.June, 3), 1},
+		{"earlier month", MustNew(2025, time.May, 31), MustNew(2025, time.June, 1), -1},
+		{"later month", MustNew(2025, time.July, 1), MustNew(2025, time.June, 30), 1},
+		{"earlier year", MustNew(2024, time.December, 31), MustNew(2025, time.January, 1), -1},
+		{"later year", MustNew(2026, time.January, 1), MustNew(2025, time.December, 31), 1},
+		{"year beats day", MustNew(2024, time.December, 31), MustNew(2025, time.January, 1), -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -44,11 +44,57 @@ func TestCompare(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	d := New(2025, time.March, 15)
+	d, err := New(2025, time.March, 15)
+	if err != nil {
+		t.Fatalf("New(2025, March, 15): %v", err)
+	}
 	if d.Year() != 2025 || d.Month() != time.March || d.Day() != 15 {
 		t.Errorf("New(2025, March, 15) = {%d, %v, %d}, want {2025, March, 15}",
 			d.Year(), d.Month(), d.Day())
 	}
+}
+
+// Out-of-range fields are nonsense, not dates. New must refuse them rather
+// than silently normalize (January 32 is not February 1 here).
+func TestNew_RejectsOutOfRange(t *testing.T) {
+	cases := []struct {
+		name      string
+		year, day int
+		month     time.Month
+	}{
+		{"month zero", 2025, 1, time.Month(0)},
+		{"month thirteen", 2025, 1, time.Month(13)},
+		{"month negative", 2025, 1, time.Month(-7)},
+		{"day zero", 2025, 0, time.January},
+		{"day negative", 2025, -7, time.January},
+		{"day billion", 2025, -1_000_000_000, time.January},
+		{"day past month end", 2025, 32, time.January},
+		{"feb 29 non-leap", 2025, 29, time.February},
+		{"feb 30 leap", 2024, 30, time.February},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := New(tc.year, tc.month, tc.day); err == nil {
+				t.Errorf("New(%d, %v, %d) should have failed", tc.year, tc.month, tc.day)
+			}
+		})
+	}
+}
+
+// A genuine leap day is a valid date and must be accepted.
+func TestNew_AcceptsLeapDay(t *testing.T) {
+	if _, err := New(2024, time.February, 29); err != nil {
+		t.Errorf("New(2024, February, 29): %v", err)
+	}
+}
+
+func TestMustNew_PanicsOnInvalid(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("MustNew should panic on an invalid date")
+		}
+	}()
+	MustNew(2025, time.February, 30)
 }
 
 func TestFromTime(t *testing.T) {
@@ -76,9 +122,9 @@ func TestString(t *testing.T) {
 		date ISO8601Date
 		want string
 	}{
-		{New(2025, time.January, 5), "2025-01-05"},
-		{New(2025, time.December, 31), "2025-12-31"},
-		{New(2000, time.February, 1), "2000-02-01"},
+		{MustNew(2025, time.January, 5), "2025-01-05"},
+		{MustNew(2025, time.December, 31), "2025-12-31"},
+		{MustNew(2000, time.February, 1), "2000-02-01"},
 	}
 	for _, tc := range tests {
 		got := tc.date.String()
@@ -89,7 +135,7 @@ func TestString(t *testing.T) {
 }
 
 func TestFormat(t *testing.T) {
-	d := New(2025, time.June, 3)
+	d := MustNew(2025, time.June, 3)
 	if got := d.Format("20060102"); got != "20250603" {
 		t.Errorf("Format(20060102) = %q, want %q", got, "20250603")
 	}
@@ -119,6 +165,41 @@ func TestParse_Invalid(t *testing.T) {
 	}
 }
 
+// An out-of-range but well-formed date must be rejected, not normalized.
+func TestParse_OutOfRange(t *testing.T) {
+	for _, value := range []string{"2025-13-01", "2025-00-01", "2025-02-30", "2025-01-32", "2025-01-00"} {
+		if _, err := Parse("2006-01-02", value); err == nil {
+			t.Errorf("Parse(%q) should have failed", value)
+		}
+	}
+}
+
+func TestMarshalJSON(t *testing.T) {
+	b, err := json.Marshal(MustNew(2025, time.March, 15))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if got, want := string(b), `"2025-03-15"`; got != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+// Marshal then Unmarshal must reproduce the original date exactly.
+func TestJSON_RoundTrip(t *testing.T) {
+	want := MustNew(2000, time.February, 29)
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got ISO8601Date
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.Compare(want) != 0 {
+		t.Errorf("round trip = %v, want %v", got, want)
+	}
+}
+
 func TestUnmarshalJSON_Valid(t *testing.T) {
 	var d ISO8601Date
 	if err := json.Unmarshal([]byte(`"2025-03-15"`), &d); err != nil {
@@ -135,6 +216,7 @@ func TestUnmarshalJSON_Invalid(t *testing.T) {
 		`"not-a-date"`,
 		`"2025/03/15"`,
 		`"03-15-2025"`,
+		`"2025-13-01"`,
 		`123`,
 	}
 	for _, input := range cases {

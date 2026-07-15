@@ -48,7 +48,7 @@ func ParseCurrency(s string) (Currency, error) {
 	case USD:
 		return USD, nil
 	default:
-		return "", fmt.Errorf("%w: %q (only %s is supported)", ErrCurrency, s, USD)
+		return "", fmt.Errorf("%w: %q (only %q is supported)", ErrCurrency, s, USD)
 	}
 }
 
@@ -92,9 +92,17 @@ type Amount struct {
 
 // New builds an Amount from a scaled integer, so New(-4500, 2, USD) is
 // -$45.00.
+//
+// units may not be math.MinInt64. Excluding that one value is what lets Neg
+// and render stay infallible: -math.MinInt64 overflows int64, so a value that
+// could hold it would make sign-flipping and absolute-value rendering fallible
+// for the sake of a magnitude no monetary amount needs.
 func New(units int64, scale uint8, c Currency) (Amount, error) {
 	if scale > maxScale {
 		return Amount{}, fmt.Errorf("%w: scale %d exceeds %d", ErrRange, scale, maxScale)
+	}
+	if units == math.MinInt64 {
+		return Amount{}, fmt.Errorf("%w: units may not be math.MinInt64", ErrRange)
 	}
 	if c == "" {
 		return Amount{}, fmt.Errorf("%w: empty", ErrCurrency)
@@ -224,10 +232,11 @@ func readExponent(s string) (int, error) {
 // Currency returns the amount's currency.
 func (a Amount) Currency() Currency { return a.currency }
 
-// Is reports whether the amount is denominated in the given currency.
-func (a Amount) Is(c Currency) bool { return a.currency == c }
+// CurrencyIs reports whether the amount is denominated in the given currency.
+func (a Amount) CurrencyIs(c Currency) bool { return a.currency == c }
 
-// Neg returns the amount with its sign flipped.
+// Neg returns the amount with its sign flipped. It is infallible because New
+// and Parse both refuse math.MinInt64, so -units can never overflow.
 func (a Amount) Neg() Amount {
 	return Amount{units: -a.units, scale: a.scale, currency: a.currency}
 }
@@ -283,24 +292,33 @@ var pow10 = [...]int64{
 
 // rescaled returns the units at the requested scale, rounding half away
 // from zero when precision must be dropped. Rounding only ever happens
-// for display; Exact never rounds.
-func (a Amount) rescaled(target uint8) int64 {
+// for display; Exact never rounds. Scaling up multiplies, so it can exceed
+// int64: rescaled reports that as an error rather than returning a wrong
+// value.
+func (a Amount) rescaled(target uint8) (int64, error) {
 	if a.scale == target {
-		return a.units
+		return a.units, nil
 	}
 	if a.scale < target {
 		units := a.units
 		for s := a.scale; s < target; s++ {
 			v, ok := mul10(units)
 			if !ok {
-				return units
+				return 0, fmt.Errorf("%w: %s does not fit at scale %d", ErrRange, render(a.units, a.scale), target)
 			}
 			units = v
 		}
-		return units
+		return units, nil
 	}
 
-	div := pow10[a.scale-target]
+	// Scaling down: divide and round. maxScale bounds the shift to a valid
+	// pow10 index, but check rather than trust it — an out-of-range index
+	// would panic instead of failing cleanly.
+	shift := int(a.scale) - int(target)
+	if shift <= 0 || shift >= len(pow10) {
+		return 0, fmt.Errorf("%w: scale shift %d has no power of ten", ErrRange, shift)
+	}
+	div := pow10[shift]
 	negative := a.units < 0
 	abs := a.units
 	if negative {
@@ -314,7 +332,7 @@ func (a Amount) rescaled(target uint8) int64 {
 	if negative {
 		q = -q
 	}
-	return q
+	return q, nil
 }
 
 // render writes the scaled integer with a decimal point inserted.
@@ -347,47 +365,71 @@ func render(units int64, scale uint8) string {
 
 // Exact renders every significant digit, with at least two decimal
 // places, and never rounds: 12 becomes "12.00" and 23631.9805 stays
-// "23631.9805". This is what belongs in an OFX document.
-func (a Amount) Exact() string {
+// "23631.9805". This is what belongs in an OFX document. Padding to the
+// minimum precision multiplies, so a value too large to pad is an error
+// rather than a silently truncated rendering.
+func (a Amount) Exact() (string, error) {
 	scale := a.scale
 	units := a.units
 	for scale < minExactScale {
 		v, ok := mul10(units)
 		if !ok {
-			break
+			return "", fmt.Errorf("%w: %s does not fit with %d decimals", ErrRange, render(a.units, a.scale), minExactScale)
 		}
 		units, scale = v, scale+1
 	}
-	return render(units, scale)
+	return render(units, scale), nil
 }
 
 // Quantity renders the value at the currency's conventional precision,
 // two decimal places for USD, rounding half away from zero. It carries no
-// symbol: "12.56", "-12.56".
-func (a Amount) Quantity() string {
+// symbol: "12.56", "-12.56". It errors when rendering would overflow int64.
+func (a Amount) Quantity() (string, error) {
 	d := a.currency.Decimals()
-	return render(a.rescaled(d), d)
+	units, err := a.rescaled(d)
+	if err != nil {
+		return "", err
+	}
+	return render(units, d), nil
 }
 
 // Display renders the value for a human, with the currency symbol and a
 // leading minus for negatives: "$12.56", "-$12.56".
-func (a Amount) Display() string {
-	q := a.Quantity()
-	if strings.HasPrefix(q, "-") {
-		return "-" + a.currency.Symbol() + q[1:]
+func (a Amount) Display() (string, error) {
+	q, err := a.Quantity()
+	if err != nil {
+		return "", err
 	}
-	return a.currency.Symbol() + q
+	if strings.HasPrefix(q, "-") {
+		return "-" + a.currency.Symbol() + q[1:], nil
+	}
+	return a.currency.Symbol() + q, nil
 }
 
 // Accounting renders the value in accounting style, wrapping negatives in
 // parentheses rather than signing them: "$12.56", "($12.56)".
-func (a Amount) Accounting() string {
-	q := a.Quantity()
-	if strings.HasPrefix(q, "-") {
-		return "(" + a.currency.Symbol() + q[1:] + ")"
+func (a Amount) Accounting() (string, error) {
+	q, err := a.Quantity()
+	if err != nil {
+		return "", err
 	}
-	return a.currency.Symbol() + q
+	if strings.HasPrefix(q, "-") {
+		return "(" + a.currency.Symbol() + q[1:] + ")", nil
+	}
+	return a.currency.Symbol() + q, nil
 }
 
-// String is the human display form.
-func (a Amount) String() string { return a.Display() }
+// String is the human display form. As a fmt.Stringer it cannot return an
+// error, so for the pathological amount too large to render at the currency's
+// precision it falls back to the exact stored digits, which never overflow.
+func (a Amount) String() string {
+	s, err := a.Display()
+	if err != nil {
+		raw := render(a.units, a.scale)
+		if strings.HasPrefix(raw, "-") {
+			return "-" + a.currency.Symbol() + raw[1:]
+		}
+		return a.currency.Symbol() + raw
+	}
+	return s
+}
