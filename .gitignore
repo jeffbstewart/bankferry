@@ -30,3 +30,29 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# --- bankferry: project-specific (merged in; the stock template above is unchanged) ---
+
+# Editor/agent local state. The stock Editor/IDE lines above are commented out;
+# activate the ones this project actually produces.
+.idea/
+.claude/
+
+# Built binary. The stock *.exe covers Windows; this catches the extensionless
+# Unix/macOS build (go build -o bankferry).
+/bankferry
+
+# Local SQLite database and its WAL/SHM sidecars. The path is set in .env; this
+# also matches casing variants like bankFerry.db.
+/[Bb]ank[Ff]erry.db*
+
+# Fetched and rewritten OFX files (OFX_OUTPUT_DIR default in example.env; `map`
+# writes to mapped/ beneath it). Local financial data — never published.
+/ofx_output/
+
+# Encrypted credential backups and exports — local only, never published.
+*.encryptedBackup
+*.tapb
+
+# Working migration checklist — never publish (removed once the move is done).
+MIGRATION.md
