@@ -200,6 +200,48 @@ func TestJSON_RoundTrip(t *testing.T) {
 	}
 }
 
+// The zero date must survive a JSON round trip: it marshals to null and
+// unmarshals back to the zero value, rather than to an unparseable
+// "0000-00-00".
+func TestJSON_ZeroRoundTrip(t *testing.T) {
+	var zero ISO8601Date
+	b, err := json.Marshal(zero)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(b) != "null" {
+		t.Errorf("Marshal(zero) = %s, want null", b)
+	}
+	var got ISO8601Date
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal(null): %v", err)
+	}
+	if !got.IsZero() {
+		t.Errorf("round trip of zero = %v, want the zero date", got)
+	}
+}
+
+// A zero date nested in a struct also round-trips through null.
+func TestJSON_ZeroRoundTripInStruct(t *testing.T) {
+	type wrapper struct {
+		When ISO8601Date `json:"when"`
+	}
+	b, err := json.Marshal(wrapper{})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(b) != `{"when":null}` {
+		t.Errorf("Marshal = %s, want {\"when\":null}", b)
+	}
+	var got wrapper
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !got.When.IsZero() {
+		t.Errorf("round trip = %v, want the zero date", got.When)
+	}
+}
+
 func TestUnmarshalJSON_Valid(t *testing.T) {
 	var d ISO8601Date
 	if err := json.Unmarshal([]byte(`"2025-03-15"`), &d); err != nil {

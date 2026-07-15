@@ -104,13 +104,23 @@ func (d ISO8601Date) Format(layout string) string {
 }
 
 // MarshalJSON renders the date as a JSON string in "YYYY-MM-DD" format, the
-// inverse of UnmarshalJSON.
+// inverse of UnmarshalJSON. The zero date marshals to null rather than
+// "0000-00-00": that string is not a valid calendar date and so would not
+// survive a round trip through UnmarshalJSON.
 func (d ISO8601Date) MarshalJSON() ([]byte, error) {
+	if d.IsZero() {
+		return []byte("null"), nil
+	}
 	return json.Marshal(d.String())
 }
 
-// UnmarshalJSON parses a JSON string in "YYYY-MM-DD" format.
+// UnmarshalJSON parses a JSON string in "YYYY-MM-DD" format. JSON null is
+// accepted as the zero date, mirroring MarshalJSON so a zero value round-trips.
 func (d *ISO8601Date) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*d = ISO8601Date{}
+		return nil
+	}
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
