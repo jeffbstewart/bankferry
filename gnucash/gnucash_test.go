@@ -160,25 +160,10 @@ func checkParsedFile(t *testing.T, f *File) {
 }
 
 func TestParseReader_InvalidGzip(t *testing.T) {
-	// Non-seekable reader with non-gzip data should fail.
-	r := &nonSeekReader{data: []byte("not gzip or xml")}
-	_, err := ParseReader(r)
+	// A *bytes.Buffer is an io.Reader but not an io.Seeker, so it exercises the
+	// non-seekable path with non-gzip data, which must fail.
+	_, err := ParseReader(bytes.NewBufferString("not gzip or xml"))
 	if err == nil {
 		t.Error("expected error for non-gzip non-seekable reader")
 	}
-}
-
-// nonSeekReader wraps a byte slice as io.Reader without Seek.
-type nonSeekReader struct {
-	data []byte
-	pos  int
-}
-
-func (r *nonSeekReader) Read(p []byte) (int, error) {
-	if r.pos >= len(r.data) {
-		return 0, bytes.ErrTooLarge
-	}
-	n := copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
 }

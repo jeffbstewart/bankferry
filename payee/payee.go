@@ -3,6 +3,7 @@
 package payee
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -34,28 +35,42 @@ type Rule struct {
 	Priority int
 }
 
-// Match holds the result of matching a transaction description.
+// Match holds the result of matching a transaction description. The zero
+// Match carries no payee and reports Matched() == false.
 type Match struct {
-	Payee      Payee
-	Confidence string // "rule" when a rule matched, "" when no match
+	Payee   Payee
+	matched bool
 }
 
-// Matched reports whether the match found a payee.
+// Matched reports whether a rule matched, and so whether Payee is meaningful.
 func (m Match) Matched() bool {
-	return m.Confidence != ""
+	return m.matched
 }
 
-// Matcher holds a set of rules and performs matching against
+// compiledRule is a Rule prepared for matching: its field normalized, its
+// pattern upper-cased once at construction rather than on every Match, and its
+// payee resolved so a match needs no map lookup.
+type compiledRule struct {
+	field        MatchField
+	patternUpper string
+	payee        Payee
+}
+
+// Matcher holds a set of compiled rules and performs matching against
 // transaction descriptions.
 type Matcher struct {
-	rules  []Rule
-	payees map[int64]Payee
+	rules []compiledRule
 }
 
-// NewMatcher creates a Matcher from a set of payees and rules.
-// Rules are sorted by priority descending, then pattern length
-// descending (longer patterns are more specific).
-func NewMatcher(payees []Payee, rules []Rule) *Matcher {
+// NewMatcher creates a Matcher from a set of payees and rules. Rules are
+// sorted by priority descending, then pattern length descending (longer
+// patterns are more specific).
+//
+// Every rule's PayeeID must resolve to one of payees. A rule pointing at an
+// unknown payee is a data-integrity error, not a rule that quietly matches to
+// an empty name, so NewMatcher refuses it rather than let a nameless match flow
+// downstream into the OFX NAME field.
+func NewMatcher(payees []Payee, rules []Rule) (*Matcher, error) {
 	pm := make(map[int64]Payee, len(payees))
 	for _, p := range payees {
 		pm[p.ID] = p
@@ -70,10 +85,20 @@ func NewMatcher(payees []Payee, rules []Rule) *Matcher {
 		return len(sorted[i].Pattern) > len(sorted[j].Pattern)
 	})
 
-	return &Matcher{
-		rules:  sorted,
-		payees: pm,
+	compiled := make([]compiledRule, len(sorted))
+	for i, r := range sorted {
+		p, ok := pm[r.PayeeID]
+		if !ok {
+			return nil, fmt.Errorf("payee: rule %d references unknown payee %d", r.ID, r.PayeeID)
+		}
+		compiled[i] = compiledRule{
+			field:        ruleField(r),
+			patternUpper: strings.ToUpper(r.Pattern),
+			payee:        p,
+		}
 	}
+
+	return &Matcher{rules: compiled}, nil
 }
 
 // Match resolves a transaction's payee from its raw descriptor and its
@@ -87,8 +112,8 @@ func NewMatcher(payees []Payee, rules []Rule) *Matcher {
 //  2. rules keyed on the merchant field, tested against merchant
 //
 // Within each tier the usual priority/length ordering applies. The first hit
-// wins. A Match with Confidence="" means no rule matched — the caller decides
-// the fallback (typically merchant_name, then raw).
+// wins. A Match reporting Matched() == false means no rule matched — the caller
+// decides the fallback (typically merchant_name, then raw).
 func (m *Matcher) Match(raw, merchant string) Match {
 	if hit, ok := m.matchField(MatchRaw, raw); ok {
 		return hit
@@ -106,11 +131,11 @@ func (m *Matcher) matchField(field MatchField, value string) (Match, bool) {
 	}
 	upper := strings.ToUpper(value)
 	for _, r := range m.rules {
-		if ruleField(r) != field {
+		if r.field != field {
 			continue
 		}
-		if strings.Contains(upper, strings.ToUpper(r.Pattern)) {
-			return Match{Payee: m.payees[r.PayeeID], Confidence: "rule"}, true
+		if strings.Contains(upper, r.patternUpper) {
+			return Match{Payee: r.payee, matched: true}, true
 		}
 	}
 	return Match{}, false

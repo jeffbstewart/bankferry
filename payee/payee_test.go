@@ -10,13 +10,24 @@ var testPayees = []Payee{
 	{ID: 5, Name: "Ace Hardware"},
 }
 
+// newMatcher builds a Matcher for tests, failing on the construction error that
+// only a dangling PayeeID produces.
+func newMatcher(t *testing.T, payees []Payee, rules []Rule) *Matcher {
+	t.Helper()
+	m, err := NewMatcher(payees, rules)
+	if err != nil {
+		t.Fatalf("NewMatcher: %v", err)
+	}
+	return m
+}
+
 func TestMatch_SubstringMatch(t *testing.T) {
 	rules := []Rule{
 		{ID: 1, PayeeID: 1, Pattern: "AMAZON.COM", Priority: 0},
 		{ID: 2, PayeeID: 2, Pattern: "WHOLEFDS", Priority: 0},
 		{ID: 3, PayeeID: 3, Pattern: "STARBUCKS", Priority: 0},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	got := m.Match("AMAZON.COM*RT4HF2AW5 AMZN.COM/BILL", "")
 	if !got.Matched() {
@@ -25,16 +36,13 @@ func TestMatch_SubstringMatch(t *testing.T) {
 	if got.Payee.Name != "Amazon" {
 		t.Errorf("Name = %q, want Amazon", got.Payee.Name)
 	}
-	if got.Confidence != "rule" {
-		t.Errorf("Confidence = %q, want rule", got.Confidence)
-	}
 }
 
 func TestMatch_CaseInsensitive(t *testing.T) {
 	rules := []Rule{
 		{ID: 1, PayeeID: 3, Pattern: "STARBUCKS", Priority: 0},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	got := m.Match("starbucks #1234 san francisco", "")
 	if !got.Matched() {
@@ -50,7 +58,7 @@ func TestMatch_PriorityOrder(t *testing.T) {
 		{ID: 1, PayeeID: 1, Pattern: "AMAZON", Priority: 0},
 		{ID: 2, PayeeID: 2, Pattern: "AMAZON FRESH", Priority: 10}, // higher priority
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	got := m.Match("AMAZON FRESH DELIVERY #12345", "")
 	if got.Payee.Name != "Whole Foods" {
@@ -63,7 +71,7 @@ func TestMatch_LongerPatternWinsAtSamePriority(t *testing.T) {
 		{ID: 1, PayeeID: 1, Pattern: "AMAZON", Priority: 0},
 		{ID: 2, PayeeID: 2, Pattern: "AMAZON.COM", Priority: 0}, // same priority, longer
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	got := m.Match("AMAZON.COM*SOMETHING", "")
 	if got.Payee.Name != "Whole Foods" {
@@ -75,19 +83,16 @@ func TestMatch_NoMatch(t *testing.T) {
 	rules := []Rule{
 		{ID: 1, PayeeID: 1, Pattern: "AMAZON", Priority: 0},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	got := m.Match("TARGET STORE #5678", "Target")
 	if got.Matched() {
 		t.Error("expected no match for unknown description")
 	}
-	if got.Confidence != "" {
-		t.Errorf("Confidence = %q, want empty", got.Confidence)
-	}
 }
 
 func TestMatch_EmptyRules(t *testing.T) {
-	m := NewMatcher(testPayees, nil)
+	m := newMatcher(t, testPayees, nil)
 
 	if m.Match("anything", "anything").Matched() {
 		t.Error("expected no match with empty rules")
@@ -96,7 +101,7 @@ func TestMatch_EmptyRules(t *testing.T) {
 
 func TestMatch_EmptyDescription(t *testing.T) {
 	rules := []Rule{{ID: 1, PayeeID: 1, Pattern: "AMAZON", Field: MatchRaw}}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	if m.Match("", "").Matched() {
 		t.Error("expected no match for empty description")
@@ -108,7 +113,7 @@ func TestMatch_MerchantField(t *testing.T) {
 	rules := []Rule{
 		{ID: 1, PayeeID: 5, Pattern: "ACE HARDWARE", Field: MatchMerchant, Priority: 10},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	// Cryptic raw, clean merchant. The merchant-keyed rule catches it.
 	got := m.Match("MOISON ACE HDWE", "Ace Hardware")
@@ -130,7 +135,7 @@ func TestMatch_RawBeatsMerchant(t *testing.T) {
 		{ID: 1, PayeeID: 4, Pattern: "CRACKD", Field: MatchRaw, Priority: 10},
 		{ID: 2, PayeeID: 2, Pattern: "CRACKER BARREL", Field: MatchMerchant, Priority: 10},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	got := m.Match("CRACKD 02 - BURLINGT", "Cracker Barrel")
 	if got.Payee.Name != "Crack'd" {
@@ -143,7 +148,7 @@ func TestMatch_EmptyMerchant(t *testing.T) {
 	rules := []Rule{
 		{ID: 1, PayeeID: 5, Pattern: "ACE HARDWARE", Field: MatchMerchant},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
 	if m.Match("SOME RAW DESC", "").Matched() {
 		t.Error("merchant-keyed rule fired against an empty merchant")
@@ -157,12 +162,22 @@ func TestNewMatcher_SortsCorrectly(t *testing.T) {
 		{ID: 3, PayeeID: 1, Pattern: "ABC", Priority: 5},
 		{ID: 4, PayeeID: 1, Pattern: "AB", Priority: 10},
 	}
-	m := NewMatcher(testPayees, rules)
+	m := newMatcher(t, testPayees, rules)
 
-	// Expected order: ID4 (pri 10), ID2 (pri 5, len 6), ID3 (pri 5, len 3), ID1 (pri 0, len 1)
-	for i, want := range []int64{4, 2, 3, 1} {
-		if m.rules[i].ID != want {
-			t.Errorf("rules[%d].ID = %d, want %d", i, m.rules[i].ID, want)
+	// Expected order: pri 10, then pri 5 by length (6, then 3), then pri 0.
+	for i, want := range []string{"AB", "ABCDEF", "ABC", "A"} {
+		if m.rules[i].patternUpper != want {
+			t.Errorf("rules[%d].patternUpper = %q, want %q", i, m.rules[i].patternUpper, want)
 		}
+	}
+}
+
+// A rule pointing at a payee that is not in the set is a data-integrity error,
+// not a match to an empty name: NewMatcher must refuse it rather than let a
+// nameless payee flow downstream.
+func TestNewMatcher_DanglingPayeeID(t *testing.T) {
+	rules := []Rule{{ID: 7, PayeeID: 999, Pattern: "AMAZON"}}
+	if _, err := NewMatcher(testPayees, rules); err == nil {
+		t.Fatal("expected an error for a rule referencing an unknown payee")
 	}
 }

@@ -21,7 +21,8 @@ const (
 	Credit AccountType = "credit"
 )
 
-// AccountSubtype refines a Depository account into an OFX ACCTTYPE.
+// AccountSubtype refines an account's Type into an OFX ACCTTYPE: the
+// depository subtypes (checking, savings, money market) and credit card.
 type AccountSubtype string
 
 const (
