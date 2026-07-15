@@ -49,6 +49,31 @@ func TestOpen_RunsMigrations(t *testing.T) {
 	}
 }
 
+// Foreign keys must be enforced, not merely requested. The PRAGMA is
+// per-connection, so this holds only because the pool is capped at a single
+// connection: a raw payee_rule insert referencing a missing payee is rejected.
+func TestOpen_EnforcesForeignKeys(t *testing.T) {
+	d, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() {
+		if err := d.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	// A plain INSERT (not INSERT OR IGNORE, which would swallow the violation)
+	// referencing a payee that does not exist must fail on the foreign key.
+	_, err = d.conn.Exec(
+		"INSERT INTO payee_rule (payee_id, pattern, match_field, priority) VALUES (?, ?, ?, ?)",
+		99999, "X", "raw", 0,
+	)
+	if err == nil {
+		t.Error("expected a foreign-key violation for a rule referencing a missing payee")
+	}
+}
+
 func TestOpen_MigrationsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 

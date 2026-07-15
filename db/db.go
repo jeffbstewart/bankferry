@@ -67,6 +67,18 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// Cap the pool at a single connection. foreign_keys is a per-connection
+	// PRAGMA that SQLite does not persist (unlike journal_mode=WAL, which is
+	// written to the file header): set on a pooled connection, every other
+	// connection the pool opens would start with foreign keys off, so
+	// enforcement would depend on which connection served a query. One
+	// connection makes the PRAGMA below hold for every query. It also keeps an
+	// in-memory database coherent — modernc, like C SQLite, gives each
+	// connection its own :memory: database, so a second connection would not see
+	// the migrated schema. This is a single-user CLI and SQLite serializes
+	// writes anyway, so a single connection costs nothing.
+	conn.SetMaxOpenConns(1)
+
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		if cerr := conn.Close(); cerr != nil {
 			log.Printf("db: close after WAL error: %v", cerr)
@@ -406,7 +418,7 @@ func (d *DB) ResetPayeeData() (rules, payees int, err error) {
 	}
 	defer func() {
 		if err != nil {
-			if rberr := tx.Rollback(); rberr != nil {
+			if rberr := tx.Rollback(); rberr != nil && rberr != sql.ErrTxDone {
 				log.Printf("db: rollback reset: %v", rberr)
 			}
 		}
