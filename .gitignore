@@ -46,6 +46,10 @@ go.work.sum
 # also matches casing variants like bankFerry.db.
 /[Bb]ank[Ff]erry.db*
 
+# Fetched and rewritten OFX files (OFX_OUTPUT_DIR default in example.env; `map`
+# writes to mapped/ beneath it). Local financial data — never published.
+/ofx_output/
+
 # Encrypted credential backups and exports — local only, never published.
 *.encryptedBackup
 *.tapb

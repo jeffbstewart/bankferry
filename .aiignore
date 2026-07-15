@@ -1,0 +1,14 @@
+# Files kept out of AI-assistant context (JetBrains .aiignore, gitignore syntax).
+# Secrets and irreplaceable/local data that must never be sent to an AI feature.
+
+# Configuration and secrets.
+.env
+
+# Encrypted credential backups and exports.
+*.encryptedBackup
+
+# Local SQLite database and its sidecars (case-folded, matches bankFerry.db).
+/[Bb]ank[Ff]erry.db*
+
+# Editor project state.
+.idea/
