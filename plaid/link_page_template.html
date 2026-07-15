@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plaid Link — bankferry</title>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #2563eb; color: white; border: none; border-radius: 6px; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #9ca3af; cursor: default; }
+    #status { margin-top: 16px; white-space: pre-wrap; }
+    .ok { color: #059669; }
+    .err { color: #b91c1c; }
+    .note { color: #4b5563; font-size: 14px; margin-top: 24px; border-top: 1px solid #e5e7eb; padding-top: 16px; }
+    .warn { margin-top: 24px; padding: 16px; border: 1px solid #b91c1c; border-radius: 6px; background: #fef2f2; color: #7f1d1d; }
+    .warn strong { display: block; margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+{{if .IsUpdate}}
+  <h1>Re-authenticate {{.InstitutionName}}</h1>
+{{else}}
+  <h1>Link an institution</h1>
+{{end}}
+  <p>Environment: <strong>{{.Environment}}</strong></p>
+
+{{if and .IsProduction (not .IsUpdate)}}
+  <div class="warn">
+    <strong>This consumes a production Item.</strong>
+    Ten Items are allowed for the lifetime of this Plaid account. Removing an
+    Item does not return its slot, and linking the same institution twice
+    creates a duplicate rather than reusing the first. Link only what you
+    intend to keep.
+  </div>
+{{end}}
+
+{{if .IsUpdate}}
+  <p>
+    This repairs the existing connection in place. No new Item is created and
+    no Item is consumed. Your stored access token does not change.
+  </p>
+  <button id="link-btn">Re-authenticate</button>
+{{else}}
+  <button id="link-btn">Connect</button>
+{{end}}
+  <div id="status"></div>
+
+{{if not .IsProduction}}
+  <div class="note">
+    Sandbox environment: test data only, no real institution is contacted.
+    Items created here are free and unlimited.
+    <br><br>
+    Sign in with <code>user_good</code> / <code>pass_good</code>. If a
+    one-time code is requested, use <code>1234</code>.
+  </div>
+{{end}}
+
+  <script>
+    var statusEl = document.getElementById("status");
+    var btn = document.getElementById("link-btn");
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls || "";
+    }
+
+    var isUpdate = {{if .IsUpdate}}true{{else}}false{{end}};
+    var receivedRedirectUri = "{{.ReceivedRedirectURI}}";
+    var isOAuthReturn = receivedRedirectUri !== "";
+
+    var config = {
+      token: "{{.LinkToken}}",
+      onSuccess: function (publicToken, metadata) {
+        btn.disabled = true;
+
+        var body;
+        if (isUpdate) {
+          // Update mode issues no usable public_token: the access token is
+          // unchanged. Sending one would invite the server to exchange it,
+          // which would create a second Item.
+          setStatus("Verifying the connection...");
+          body = {};
+        } else {
+          setStatus("Exchanging public token...");
+          var institution = metadata && metadata.institution ? metadata.institution : {};
+          body = {
+            public_token: publicToken,
+            institution_id: institution.institution_id || "",
+            institution_name: institution.name || ""
+          };
+        }
+
+        fetch("{{.CompletePath}}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }).then(function (resp) {
+          return resp.text().then(function (body) {
+            if (resp.ok) {
+              setStatus(body || "Linked. You may close this tab.", "ok");
+            } else {
+              btn.disabled = false;
+              setStatus(body || ("Error " + resp.status), "err");
+            }
+          });
+        }).catch(function (err) {
+          btn.disabled = false;
+          setStatus("Could not reach the local server: " + err, "err");
+        });
+      },
+      onExit: function (err) {
+        if (err) {
+          setStatus("Link exited: " + (err.display_message || err.error_message || err.error_code), "err");
+        }
+      },
+      onEvent: function (eventName) {
+        // Link is handing the user to a bank's own sign-in. Tell the server,
+        // which will accept an OAuth callback only from now, and only briefly.
+        if (eventName === "OPEN_OAUTH") {
+          fetch("/oauth-arm", { method: "POST" }).catch(function () {});
+        }
+      }
+    };
+
+    // The bank sent the user back. Give Link the address it landed on, so it
+    // can resume the session it started. The server supplies that address
+    // rather than trusting window.location.
+    if (isOAuthReturn) {
+      config.receivedRedirectUri = receivedRedirectUri;
+    }
+
+    var handler = Plaid.create(config);
+
+    btn.addEventListener("click", function () {
+      setStatus("");
+      handler.open();
+    });
+
+    // Resuming after OAuth is not a new user action; do not wait for a click.
+    if (isOAuthReturn) {
+      setStatus("Resuming after bank sign-in...");
+      handler.open();
+    }
+  </script>
+</body>
+</html>
