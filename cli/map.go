@@ -167,9 +167,13 @@ func mapTransactions(scanner *bufio.Scanner, store *db.DB, matcher **payee.Match
 		case reviewNamed:
 			mapped++
 			// A new rule may cover other transactions still ahead in this
-			// file; rebuild so it applies without asking again.
+			// file; rebuild so it applies without asking again. The rule is
+			// already persisted, so a rebuild failure only costs re-asking
+			// within this session — but log it rather than swallow it.
 			if updated, merr := buildMatcher(store); merr == nil {
 				*matcher = updated
+			} else {
+				log.Printf("cli: rebuild matcher after new rule: %v", merr)
 			}
 		case reviewSkip:
 			// Leave the raw name in place.
@@ -246,7 +250,7 @@ func reviewTransaction(scanner *bufio.Scanner, store *db.DB, txn *ofx.Transactio
 
 // typePayee reads a payee name and a raw-keyed pattern, and saves the rule.
 // Raw-keyed by default because the reason to type a correction is usually that
-// the merchant name is wrong (see the Crack'd case in payee.md).
+// the merchant name is wrong (the case where Plaid mislabels a raw descriptor).
 func typePayee(scanner *bufio.Scanner, store *db.DB, txn *ofx.Transaction, raw string) reviewAction {
 	stdout("  Payee name: ")
 	if !scanner.Scan() {
@@ -314,16 +318,38 @@ func writeMemosCleared(stmt *ofx.Statement, txns []ofx.Transaction) {
 }
 
 func writeMapped(stmt *ofx.Statement, dstPath string) error {
-	out, err := os.Create(dstPath)
+	// Write to a temp file and rename into place, so mapped/<name>.ofx only ever
+	// appears once it is complete. findUnmappedFiles skips any name already
+	// present in mapped/, so a partial file — a full disk or a crash mid-write —
+	// would otherwise never be regenerated, and mapped/ is exactly what GnuCash
+	// imports. (The fetch path in ofxexport guards against the same hazard.)
+	tmp, err := os.CreateTemp(filepath.Dir(dstPath), ".map-*.tmp")
 	if err != nil {
 		return err
 	}
-	writeErr := ofx.Write(out, *stmt)
-	closeErr := out.Close()
+	tmpName := tmp.Name()
+
+	writeErr := ofx.Write(tmp, *stmt)
+	closeErr := tmp.Close()
 	if writeErr != nil {
+		removeTemp(tmpName)
 		return writeErr
 	}
-	return closeErr
+	if closeErr != nil {
+		removeTemp(tmpName)
+		return closeErr
+	}
+	if err := os.Rename(tmpName, dstPath); err != nil {
+		removeTemp(tmpName)
+		return err
+	}
+	return nil
+}
+
+func removeTemp(path string) {
+	if err := os.Remove(path); err != nil {
+		log.Printf("cli: remove temp map file %s: %v", path, err)
+	}
 }
 
 func buildMatcher(store *db.DB) (*payee.Matcher, error) {

@@ -114,16 +114,6 @@ func runPlaidLink(args []string) {
 		stderr("         under Allowed redirect URIs.\n\n")
 	}
 
-	client, err := plaid.NewClient(env, plaidCredentials(env))
-	if err != nil {
-		stderr("Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Ctrl+C aborts the wait without leaving the server running.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	items, broken, err := plaid.LoadItems(env)
 	if err != nil {
 		stderr("Error reading stored items: %v\n", err)
@@ -141,7 +131,22 @@ func runPlaidLink(args []string) {
 		stdout("\n")
 	}
 
+	// Confirm before touching the security key. Unsealing the production secret
+	// in NewClient costs a physical gesture; prompting for the typed
+	// confirmation only afterward would spend that gesture on a link the
+	// operator then aborts, and would train touch-before-read — the habit the
+	// gesture discipline exists to prevent. plaid-remove confirms first too.
 	confirmProductionLink(env)
+
+	client, err := plaid.NewClient(env, plaidCredentials(env))
+	if err != nil {
+		stderr("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Ctrl+C aborts the wait without leaving the server running.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	result, err := plaid.StartLinkServer(ctx, env, client, opts)
 	if err != nil {

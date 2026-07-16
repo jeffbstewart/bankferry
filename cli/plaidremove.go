@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"os"
+	"os/signal"
 	"strings"
 
 	"golang.org/x/term"
@@ -81,7 +82,10 @@ func runPlaidRemove(args []string) {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	// Match the other network commands: Ctrl+C cancels an in-flight
+	// /item/remove rather than only killing the process.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	removed := true
 	if err := plaid.RemoveItem(ctx, client, item.AccessToken, item.ItemID); err != nil {
@@ -131,12 +135,7 @@ func runPlaidRemove(args []string) {
 // would never be read again. Failing to drop it is harmless, so it never
 // stops the command.
 func forgetSyncCursor(env plaid.Environment, itemID string) {
-	dbPath := os.Getenv("DATABASE_PATH")
-	if dbPath == "" {
-		return
-	}
-
-	store, err := db.Open(dbPath)
+	store, err := db.Open(databasePath())
 	if err != nil {
 		stderr("Warning: could not open the database to drop the sync cursor: %v\n", err)
 		return
