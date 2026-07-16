@@ -5,7 +5,8 @@ the payee names to match the ones already used in your GnuCash book.
 
 It exists to remove about an hour of weekly toil: downloading statements, importing them,
 and correcting the same payee names by hand every time. Pure Go, no cgo. Runs on Windows,
-macOS and Linux. Every credential lives in the operating system's credential store.
+macOS and Linux. Credentials live in the operating system's credential store; the
+production API secret is sealed behind a security key.
 
 ```
 Plaid /transactions/sync ──► one OFX file per account ──► GnuCash import
@@ -21,17 +22,44 @@ Sandbox works end to end. Production is reachable only through a security key.
 
 - **The production API secret is sealed behind a FIDO2 security key.** It cannot be read
   without a physical touch — not by an attacker with the disk, not by an AI agent running
-  as the operator, not by the tool run by mistake. Enroll with `plaid-enroll-key`. See
-  [Security model](#security-model).
+  as the operator, not by the tool run by mistake. That is the whole point: the account's
+  ten Plaid trial Items are irreplaceable, and an honest slip or a runaway agent could
+  otherwise burn all ten. Enroll with `plaid-enroll-key`. See [Security model](#security-model)
+  for why.
 - The security-key cryptography now lives in
   [`github.com/jeffbstewart/touchvault`](https://github.com/jeffbstewart/touchvault),
   extracted from this repository and consumed as a dependency.
-- Chase, the account this was written for, is not yet tested with Plaid. A prior
-  aggregator never returned usable data for it, but that is not a Plaid finding — the
-  question is still open.
+- Chase, the account this was written for, **works through Plaid**: it links over OAuth,
+  and a fetch pulled its full history. Earlier aggregators never returned usable data for
+  it — that was the open question the whole tool waited on, and Plaid resolved it.
 
 This is a personal tool, published because the *notes* may be worth more than the code.
 Most of what is written down below cost real debugging, and none of it was easy to find.
+
+## What it assumes — this is niche
+
+Sandbox works out of the box. **Production is not plug-and-play.** Linking a real bank
+through Plaid's OAuth flow needs the browser to reach a callback URL Plaid has on file,
+over trusted HTTPS, and this tool was built for one specific setup:
+
+- **A registered HTTPS redirect URI.** Plaid rejects an unregistered one, and OAuth
+  institutions — Chase among them — will not complete without it.
+- **Dynamic DNS, a reverse proxy (HAProxy), and a wildcard TLS certificate.** The loopback
+  link server is fronted by HAProxy under a name covered by a wildcard cert, so the browser
+  reaches a trusted HTTPS origin that forwards to the local server. Plaid never fetches the
+  redirect URI — only your browser does (see [Security model](#security-model)) — so it
+  need not face the internet, but it must be HTTPS and trusted.
+- **A modern FIDO2 security key** with `hmac-secret` support, to hold the production API
+  secret.
+
+If that is more than you want to run, two walk-backs keep the rest useful:
+
+- **Drop the security key.** Fork out the hardware path and serve the production secret from
+  the keyring, the way sandbox already is. You lose the touch-to-read guarantee but keep the
+  fetch → map → GnuCash pipeline intact.
+- **Self-host TLS instead of a public cert.** Run your own CA, install its root in the
+  browser, and issue a loopback certificate — no dynamic DNS or HAProxy, at the cost of one
+  browser trust-store edit.
 
 ## Build
 
@@ -185,6 +213,16 @@ is the only unauthenticated endpoint. Plaid never fetches the redirect URI — o
 browser does — so it need not face the internet.
 
 ### Production requires a human, cryptographically
+
+The stakes are the reason this machinery exists. A Plaid Trial account is allowed **ten
+Production Items for the lifetime of the account** — removing one does not return its slot —
+and linking a bank spends one. The ten are irreplaceable, and the ways to burn them are
+mundane: an honest mistake at the keyboard, or an automated process doing what it was not
+meant to. Much of this code was written by an AI coding agent; a hallucinating or looping
+one, running with the operator's own permissions, could work through all ten before anyone
+noticed. Because every production action — including `plaid-link`, which spends an Item —
+must first read the production secret, gating that read behind a physical touch puts a
+human in the loop for anything that can cost a slot.
 
 Every Plaid API secret is obtained through one interface:
 
