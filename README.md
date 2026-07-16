@@ -4,9 +4,11 @@ Pulls bank transactions from [Plaid](https://plaid.com), writes OFX 2.2 files, a
 the payee names to match the ones already used in your GnuCash book.
 
 It exists to remove about an hour of weekly toil: downloading statements, importing them,
-and correcting the same payee names by hand every time. Pure Go, no cgo. Runs on Windows,
-macOS and Linux. Credentials live in the operating system's credential store; the
-production API secret is sealed behind a security key.
+and correcting the same payee names by hand every time. Pure Go, no cgo. It builds on
+Windows, macOS and Linux, but for now it runs only on Windows: production needs a security
+key, and the security-key path is Windows-only until it is ported (see
+[Platform support](#platform-support)). Credentials live in the operating system's
+credential store; the production API secret is sealed behind a security key.
 
 ```
 Plaid /transactions/sync ──► one OFX file per account ──► GnuCash import
@@ -36,6 +38,24 @@ Sandbox works end to end. Production is reachable only through a security key.
 This is a personal tool, published because the *notes* may be worth more than the code.
 Most of what is written down below cost real debugging, and none of it was easy to find.
 
+## Platform support
+
+The code is pure Go and builds — and its tests pass — on Windows, macOS and Linux. But the
+production API secret is sealed behind a FIDO2 security key, and that path reaches the key
+through touchvault's `fido` provider, which today has a backend only for Windows
+(`webauthn.dll`). On macOS and Linux the provider still compiles but returns
+`ErrUnsupportedPlatform`, so any production command — `plaid-enroll-key`,
+`plaid-link --env production`, `fetch --env production` — fails there.
+
+Sandbox needs no security key (its secret comes from the OS keyring), so the sandbox flow
+and the `learn`/`map` GnuCash pipeline work on all three platforms. But sandbox is only test
+data, so **real use is effectively Windows-only for now.**
+
+Nothing about the design is Windows-bound. Porting means adding a non-Windows backend to
+touchvault's `fido` provider — the natural route is libfido2, which needs cgo and so is a
+deliberate trade against the current pure-Go build. Until someone makes that call, this tool
+targets Windows.
+
 ## What it assumes — this is niche
 
 Sandbox works out of the box. **Production is not plug-and-play.** Linking a real bank
@@ -50,7 +70,8 @@ over trusted HTTPS, and this tool was built for one specific setup:
   redirect URI — only your browser does (see [Security model](#security-model)) — so it
   need not face the internet, but it must be HTTPS and trusted.
 - **A modern FIDO2 security key** with `hmac-secret` support, to hold the production API
-  secret.
+  secret — and, for now, **Windows**, because the security-key path supports only Windows
+  (see [Platform support](#platform-support)).
 
 If that is more than you want to run, two walk-backs keep the rest useful:
 
