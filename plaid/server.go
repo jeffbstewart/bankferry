@@ -438,6 +438,11 @@ func serveLink(ctx context.Context, env Environment, data linkPageData, opts Lin
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// The entry page's URL carries ?key=, and this page loads Plaid's JS
+		// from cdn.plaid.com. no-referrer keeps the access key out of the
+		// Referer header on those cross-origin requests, even on browsers whose
+		// default policy would otherwise send the path.
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		if _, err := buf.WriteTo(w); err != nil {
 			log.Printf("plaid: writing link page: %v", err)
 		}
@@ -543,6 +548,18 @@ func serveLink(ctx context.Context, env Environment, data linkPageData, opts Lin
 		outErr = ErrOAuthTimeout
 	case <-ctx.Done():
 		outErr = ctx.Err()
+	}
+
+	// A completed exchange and the OAuth expiry (or a ctx cancel) can become
+	// ready in the same instant, and select then picks among them at random —
+	// so a successful, Item-spending exchange could be reported as a timeout.
+	// The operator, told it timed out, would relink and burn a second of the
+	// account's ten lifetime Items. Re-check done non-blocking and let success
+	// win: if the exchange completed, it did not time out.
+	select {
+	case <-done:
+		outErr = nil
+	default:
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)

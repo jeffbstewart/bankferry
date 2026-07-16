@@ -137,6 +137,41 @@ func TestDecryptItems_TamperedCiphertext(t *testing.T) {
 	}
 }
 
+// A corrupt or malicious header must fail cleanly. The KDF parameters are read
+// before authentication (the derived key is needed to open the seal), and
+// argon2 panics on a zero time or thread count and would allocate a tampered
+// memory field — terabytes in the worst case — so decodeHeader bounds them.
+// This is the class of corruption verify exists to report, so it must never
+// panic or OOM.
+func TestDecryptItems_OutOfRangeKDFParams(t *testing.T) {
+	const (
+		timeOff    = len(backupMagic) + 2 // past magic, format, kdf
+		memoryOff  = timeOff + 4          // time is a big-endian uint32
+		threadsOff = memoryOff + 4        // memory is a big-endian uint32
+	)
+	cases := []struct {
+		name    string
+		corrupt func([]byte)
+	}{
+		{"zero time", func(b []byte) { b[timeOff], b[timeOff+1], b[timeOff+2], b[timeOff+3] = 0, 0, 0, 0 }},
+		{"zero threads", func(b []byte) { b[threadsOff] = 0 }},
+		{"oversize memory", func(b []byte) { b[memoryOff], b[memoryOff+1], b[memoryOff+2], b[memoryOff+3] = 0xFF, 0xFF, 0xFF, 0xFF }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blob, err := EncryptItems(Sandbox, backupItems(), []byte("pw"))
+			if err != nil {
+				t.Fatalf("EncryptItems: %v", err)
+			}
+			tc.corrupt(blob)
+			// Must return an error — and, crucially, not panic or OOM.
+			if _, err := DecryptItems(blob, []byte("pw")); !errors.Is(err, ErrBackupFormat) {
+				t.Errorf("err = %v, want ErrBackupFormat", err)
+			}
+		})
+	}
+}
+
 // The header is authenticated as additional data, so rewriting the salt,
 // the nonce, or the environment must also fail. A sandbox export must never
 // be decryptable as a production one.

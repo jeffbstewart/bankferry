@@ -178,6 +178,13 @@ func (w BackupWarning) Message() string {
 // recorded export. It returns a nil warning when there is nothing to say:
 // no Items, or a backup whose fingerprint still matches.
 //
+// Coverage is judged from the recorded fingerprint alone; this deliberately
+// does not open the backup file or re-decrypt it. That is verify's job, and it
+// is intentional here: the expected case is a backup written to removable media
+// that is normally absent, where checking the file would report a false gap
+// every time the drive is unplugged. So "covered" means the fingerprint of what
+// was exported still matches the Items — not that the file exists on disk now.
+//
 // It never fails the caller. A keyring that cannot be read is reported as an
 // error for the caller to ignore, because nagging is not worth breaking a
 // command over.

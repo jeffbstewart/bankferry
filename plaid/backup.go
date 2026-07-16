@@ -43,6 +43,12 @@ const (
 	argonThreads uint8  = 4
 	argonKeyLen  uint32 = 32
 
+	// argonMaxMemory caps the KDF memory read from a backup header. The
+	// legitimate value is argonMemory (64 MiB); a tampered field could otherwise
+	// name up to ~4 TiB and force an out-of-memory abort before authentication.
+	// 1 GiB is generous headroom for a future parameter bump.
+	argonMaxMemory uint32 = 1 << 20 // 1 GiB, in KiB
+
 	saltLen  = 16
 	nonceLen = 12
 )
@@ -138,6 +144,22 @@ func decodeHeader(blob []byte) (header, []byte, error) {
 	}
 	if h.threads, err = r.ReadByte(); err != nil {
 		return header{}, nil, fmt.Errorf("%w: truncated", ErrBackupFormat)
+	}
+
+	// These parameters feed argon2.IDKey, which panics (not errors) on time < 1
+	// or threads < 1, and would allocate h.memory KiB up front — all before the
+	// ciphertext is authenticated, since the derived key is needed to open the
+	// GCM seal. A corrupt or malicious header must fail cleanly here: reporting
+	// exactly that is why verify re-reads a backup. Bound them to a sane
+	// envelope before deriveKey is ever called.
+	if h.time < 1 {
+		return header{}, nil, fmt.Errorf("%w: argon2 time %d out of range", ErrBackupFormat, h.time)
+	}
+	if h.threads < 1 {
+		return header{}, nil, fmt.Errorf("%w: argon2 threads %d out of range", ErrBackupFormat, h.threads)
+	}
+	if h.memory > argonMaxMemory {
+		return header{}, nil, fmt.Errorf("%w: argon2 memory %d KiB exceeds the %d KiB cap", ErrBackupFormat, h.memory, argonMaxMemory)
 	}
 
 	h.salt, err = readLengthPrefixed(r)

@@ -55,6 +55,11 @@ func NewClient(env Environment, creds Credentials) (*plaidsdk.APIClient, error) 
 	cfg.AddDefaultHeader("PLAID-CLIENT-ID", creds.ClientID)
 	cfg.AddDefaultHeader("PLAID-SECRET", creds.Secret)
 	cfg.UseEnvironment(base)
+	// Without an explicit client the SDK uses http.DefaultClient, whose timeout
+	// is zero — so a stalled connection during ExchangePublicToken (the call
+	// that spends an Item) would hang until the caller's context, if any, fired.
+	// Bound every SDK call the same way the raw client bounds its own.
+	cfg.HTTPClient = &http.Client{Timeout: httpRequestTimeout}
 
 	return plaidsdk.NewAPIClient(cfg), nil
 }

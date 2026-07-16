@@ -19,7 +19,7 @@ import (
 // change what we parse.
 const plaidAPIVersion = "2020-09-14"
 
-const rawRequestTimeout = 60 * time.Second
+const httpRequestTimeout = 60 * time.Second
 
 // DataClient talks to Plaid's data endpoints over plain HTTP and JSON.
 //
@@ -60,7 +60,7 @@ func NewDataClient(env Environment, creds Credentials) (*DataClient, error) {
 	return &DataClient{
 		baseURL: base,
 		creds:   creds,
-		http:    &http.Client{Timeout: rawRequestTimeout},
+		http:    &http.Client{Timeout: httpRequestTimeout},
 	}, nil
 }
 
