@@ -53,6 +53,9 @@ go.work.sum
 # Encrypted credential backups and exports — local only, never published.
 *.encryptedBackup
 *.tapb
+# ...except the golden backup fixture: it holds fabricated tokens and is
+# deliberately committed, so the format-regression test can read it.
+!plaid/testdata/*.tapb
 
 # Working migration checklist — never publish (removed once the move is done).
 MIGRATION.md
