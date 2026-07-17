@@ -9,6 +9,7 @@
 package ofxexport
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -31,8 +32,24 @@ type ExportStore interface {
 	IsExported(transactionID string) (bool, error)
 }
 
-// FileCreator creates (or truncates) a file and returns a WriteCloser.
+// pendingSuffix is appended to an account's final filename to name the file
+// its statement is written into. The caller renames it onto the final name
+// once every account has been written. It must not end in ".ofx": the `map`
+// command reads every .ofx file in the directory, and a statement that is
+// still being written is not one of them.
+const pendingSuffix = ".part"
+
+// FileCreator creates a new file and returns a WriteCloser for it.
+//
+// It must refuse a path that already exists rather than truncate it, and
+// report the refusal as an error satisfying errors.Is(err, os.ErrExist).
+// Truncating would lose transactions silently — see ExportAccount.
 type FileCreator func(path string) (io.WriteCloser, error)
+
+// ExistsFunc reports whether a path is already taken. A failure to tell is
+// an error, never a false: treating an unreadable directory as "nothing
+// there" is how the file this check protects gets overwritten.
+type ExistsFunc func(path string) (bool, error)
 
 // Exporter writes OFX files.
 type Exporter struct {
@@ -40,15 +57,31 @@ type Exporter struct {
 	OutputDir  string
 	DryRun     bool
 	CreateFile FileCreator
+	Exists     ExistsFunc
+
+	// Now supplies the statement's as-of date and the second that
+	// distinguishes one export's filenames from the next's. It is injected
+	// because a test of a filename collision cannot be at the mercy of which
+	// side of a second boundary two accounts land on.
+	Now func() time.Time
 }
 
 // AccountResult describes the outcome of exporting a single account.
 type AccountResult struct {
 	AccountName     string
 	NewTransactions int
-	FilePath        string
-	Skipped         bool
-	Err             error
+
+	// FilePath is where the statement belongs. Nothing is there yet: the
+	// statement is written to PendingPath, and the caller renames it onto
+	// FilePath once every account has been exported.
+	FilePath string
+
+	// PendingPath holds the written statement, under a name `map` ignores.
+	// It is empty for a skipped account and in dry-run mode.
+	PendingPath string
+
+	Skipped bool
+	Err     error
 
 	// ExportedIDs are the transaction IDs written to FilePath. The caller
 	// records them, together with the provider's cursor, in one database
@@ -62,6 +95,10 @@ type AccountResult struct {
 
 // ExportAll exports each account from the transactions supplied for it,
 // continuing past per-account errors.
+//
+// Every result that carries a PendingPath has a complete statement waiting
+// under it, including results produced after one that failed. A caller that
+// abandons the batch must remove all of them.
 func (e *Exporter) ExportAll(accounts []source.Account, byAccount map[string][]source.Transaction) []AccountResult {
 	results := make([]AccountResult, 0, len(accounts))
 	for _, acct := range accounts {
@@ -73,11 +110,27 @@ func (e *Exporter) ExportAll(accounts []source.Account, byAccount map[string][]s
 // ExportAccount filters out pending and already-exported transactions,
 // writes an OFX file, and reports which transaction IDs it contains.
 //
-// It does not record the export. If the process dies before the caller
-// commits, the file is rewritten on the next run and GnuCash deduplicates
-// it on FITID, which is stable. The reverse order would lose transactions:
-// a provider cursor that advanced past transactions never written is not
-// recoverable.
+// It does not record the export, and it does not put the file under its
+// final name. Both belong to the caller, which renames every account's file
+// into place together and only then advances the provider's cursor. If the
+// process dies before that, the file is rewritten on the next run and
+// GnuCash deduplicates it on FITID, which is stable. The reverse order would
+// lose transactions: a provider cursor that advanced past transactions never
+// written is not recoverable.
+//
+// Two collision guards stand between a filename and that loss, because a
+// filename carries only the institution, the account mask, and a timestamp
+// good to one second, and none of the three is unique:
+//
+//   - The final name must be free before anything is written. A rename
+//     replaces whatever occupies its target, on every OS this runs on, so
+//     checking at rename time would be too late — the replaced file's
+//     transactions are recorded as exported and the cursor moves past them.
+//
+//   - The pending file is created exclusively. Two accounts exported
+//     together resolve to the same final name if they share an institution
+//     and a mask, and neither final name exists yet, so the free-name check
+//     passes for both; the second one's pending file is what collides.
 func (e *Exporter) ExportAccount(acct source.Account, txns []source.Transaction) AccountResult {
 	result := AccountResult{AccountName: acct.Name}
 
@@ -126,37 +179,67 @@ func (e *Exporter) ExportAccount(acct source.Account, txns []source.Transaction)
 	result.NewTransactions = len(newTxns)
 
 	// 4. Build and write the OFX statement.
-	today := civildate.Today()
+	now := e.Now()
+	today := civildate.FromTime(now)
 	stmt, err := e.buildStatement(acct, newTxns, posted, today)
 	if err != nil {
 		result.Err = fmt.Errorf("build statement: %w", err)
 		return result
 	}
 
-	timestamp := time.Now().Format("20060102150405")
+	timestamp := now.Format("20060102150405")
 	filename := sanitizeFilename(acct.Institution.Name) + "_" + acct.LastFour + "_" + timestamp + ".ofx"
 	filePath := filepath.Join(e.OutputDir, filename)
 
-	f, err := e.CreateFile(filePath)
+	taken, err := e.Exists(filePath)
 	if err != nil {
-		result.Err = fmt.Errorf("create file %s: %w", filePath, err)
+		result.Err = fmt.Errorf("check whether %s already exists: %w", filePath, err)
+		return result
+	}
+	if taken {
+		result.Err = fmt.Errorf("%s already exists, so %s was not exported: renaming "+
+			"onto it would destroy the transactions it holds. Nothing was committed; "+
+			"run fetch again, which names the file for a later second: %w",
+			filePath, acct.Name, os.ErrExist)
+		return result
+	}
+
+	// The pending name is the final name plus a constant suffix, and nothing
+	// else. Appending a constant is injective, so two accounts collide here if
+	// and only if they would have collided on the final name — which makes the
+	// exclusive create below the check the free-name check above cannot be:
+	// within one batch no final name exists yet, so both accounts pass it.
+	pendingPath := filePath + pendingSuffix
+
+	f, err := e.CreateFile(pendingPath)
+	if errors.Is(err, os.ErrExist) {
+		// Nothing is removed: the pending file belongs to an account exported
+		// moments ago, and its statement is complete and waiting to be renamed.
+		result.Err = fmt.Errorf("%s and an account already exported produce the same "+
+			"file name, %s: they share an institution and the mask %q. Nothing was "+
+			"committed: %w", acct.Name, filePath, acct.LastFour, err)
+		return result
+	}
+	if err != nil {
+		result.Err = fmt.Errorf("create file %s: %w", pendingPath, err)
 		return result
 	}
 
 	writeErr := ofx.Write(f, stmt)
 	closeErr := f.Close()
 	if writeErr != nil {
-		removeFile(filePath)
+		removeFile(pendingPath)
 		result.Err = fmt.Errorf("write OFX: %w", writeErr)
 		return result
 	}
 	if closeErr != nil {
-		removeFile(filePath)
+		removeFile(pendingPath)
 		result.Err = fmt.Errorf("close file: %w", closeErr)
 		return result
 	}
 
 	result.FilePath = filePath
+	result.PendingPath = pendingPath
 	result.ExportedIDs = make([]string, len(newTxns))
 	for i, txn := range newTxns {
 		result.ExportedIDs[i] = txn.ID

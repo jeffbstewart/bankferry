@@ -450,49 +450,79 @@ func TestSaveItem_StoreError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Duplicate-Item prevention
+// Duplicate-Item detection
 // ---------------------------------------------------------------------------
 
 // Linking the same institution twice creates a duplicate Item on Plaid's
 // side and permanently consumes another of the Trial plan's ten. Callers
 // must be able to detect it before exchanging the public token.
-func TestFindItemByInstitution(t *testing.T) {
+func TestFindItemsByInstitution(t *testing.T) {
 	useFakeItemStore(t)
 
 	if err := SaveItem(Sandbox, testItem("item_1", "ins_chase", "Chase")); err != nil {
 		t.Fatal(err)
 	}
 
-	got, found, err := FindItemByInstitution(Sandbox, "ins_chase")
+	got, err := FindItemsByInstitution(Sandbox, "ins_chase")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || got.ItemID != "item_1" {
-		t.Errorf("found = %v, item = %+v", found, got)
+	if len(got) != 1 || got[0].ItemID != "item_1" {
+		t.Errorf("got %+v, want just item_1", got)
 	}
 
-	_, found, err = FindItemByInstitution(Sandbox, "ins_other")
+	got, err = FindItemsByInstitution(Sandbox, "ins_other")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found {
-		t.Error("did not expect to find an unlinked institution")
+	if len(got) != 0 {
+		t.Errorf("got %+v for an unlinked institution, want none", got)
 	}
 }
 
-func TestFindItemByInstitution_EmptyIDNeverMatches(t *testing.T) {
+// An Item is one login, not one institution, so two logins at one bank are
+// legitimately two Items. Reporting only the first would make the caller's
+// choice of which one to name arbitrary.
+func TestFindItemsByInstitution_ReturnsEveryMatch(t *testing.T) {
+	useFakeItemStore(t)
+
+	if err := SaveItem(Sandbox, testItem("item_1", "ins_capone", "Capital One")); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveItem(Sandbox, testItem("item_2", "ins_capone", "Capital One")); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveItem(Sandbox, testItem("item_3", "ins_chase", "Chase")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindItemsByInstitution(Sandbox, "ins_capone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d items, want both logins at the institution: %+v", len(got), got)
+	}
+	ids := []string{got[0].ItemID, got[1].ItemID}
+	sort.Strings(ids)
+	if ids[0] != "item_1" || ids[1] != "item_2" {
+		t.Errorf("got %v, want item_1 and item_2", ids)
+	}
+}
+
+func TestFindItemsByInstitution_EmptyIDNeverMatches(t *testing.T) {
 	useFakeItemStore(t)
 
 	if err := SaveItem(Sandbox, testItem("item_1", "", "Unknown")); err != nil {
 		t.Fatal(err)
 	}
 
-	_, found, err := FindItemByInstitution(Sandbox, "")
+	got, err := FindItemsByInstitution(Sandbox, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found {
-		t.Error("an empty institution ID must never match")
+	if len(got) != 0 {
+		t.Errorf("an empty institution ID must never match, got %+v", got)
 	}
 }
 

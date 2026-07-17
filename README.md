@@ -169,6 +169,37 @@ The opposite order is safe: crash after writing files and the next run receives 
 transactions, rewrites them, and GnuCash deduplicates on FITID. That only holds because the
 FITID is stable.
 
+The same reasoning bans overwriting an `.ofx` file. A filename carries the institution, the
+account mask, and a timestamp good to one second, and two accounts can share all three — two
+logins at one bank, most plausibly. Overwriting one would be silent: the replaced file's
+transactions are still recorded as exported and the cursor still advances past them. So each
+account's statement is written to a `.part` file whose name is the final name plus a
+constant suffix, every one of them is renamed into place together, and only then does the
+cursor move. The final name must be free before the write, and the `.part` file is created
+exclusively — which catches two accounts that would collide, because deriving the pending
+name from the final one means they collide there first. A collision is refused, never
+resolved by guessing.
+
+### An Item is one login, not one institution
+
+`plaid-link` refuses by default to link an institution that already has an Item, before the
+exchange — it is the exchange that creates the duplicate, and a duplicate spends one of the
+ten forever. Re-linking a login you already have recovers nothing.
+
+Two logins at one bank are a different thing: legitimately two Items, and worth two slots.
+`--duplicate-of <item id>` names the existing Item the new one sits beside and permits that
+one duplicate. Naming an Item rather than flipping an "allow duplicates" switch keeps the
+guard alive for every other bank — pick a different already-linked institution in the browser
+by mistake and it still refuses. The flag resolves before the security key is touched, so a
+mistyped item ID costs a re-run rather than a gesture.
+
+The limit is worth stating plainly: **nothing can tell a new login from a re-link of one you
+already have.** A login's identity is not known until after the exchange, and the exchange is
+what spends the slot. (Plaid's own duplicate detection compares account masks — post-exchange,
+so it cannot help here.) `--duplicate-of` proves only that you know the institution is already
+linked; with two Items at one bank, naming either permits a third. The real guard is your own
+intent, declared before the browser opens.
+
 ### Plaid access tokens cannot be recovered
 
 No endpoint returns an access token given an `item_id`. Lose the token and the Item can

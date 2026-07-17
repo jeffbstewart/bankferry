@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -103,7 +105,9 @@ func runFetch(args []string) {
 		Store:      store,
 		OutputDir:  unmappedDir,
 		DryRun:     dryRun,
-		CreateFile: func(path string) (io.WriteCloser, error) { return os.Create(path) },
+		CreateFile: createExclusive,
+		Exists:     pathExists,
+		Now:        time.Now,
 	}
 
 	failed := 0
@@ -112,7 +116,7 @@ func runFetch(args []string) {
 	for _, item := range items {
 		n, err := fetchItem(ctx, client, store, exporter, env, item, dryRun, days)
 		if err != nil {
-			stderr("  %s: %v\n\n", item.InstitutionName, err)
+			stderr("  %s: %v\n\n", itemLabel(item), err)
 			failed++
 			continue
 		}
@@ -131,6 +135,56 @@ func runFetch(args []string) {
 	}
 }
 
+// createExclusive satisfies ofxexport.FileCreator: it opens a new file and
+// fails with os.ErrExist rather than truncating one that is already there.
+// os.Create, which truncates, would turn a filename collision into silently
+// lost transactions instead of an error.
+func createExclusive(path string) (io.WriteCloser, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// pathExists satisfies ofxexport.ExistsFunc. Only a definitive "not there"
+// reports false; any other failure is returned, because the caller uses false
+// to decide it may rename a file onto this path.
+func pathExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+// itemLabel names an Item in console output.
+//
+// The institution name alone does not identify one. An Item is one login, so
+// two logins at a bank are two Items with the same name, and a run that
+// printed "Capital One" twice would leave the operator unable to tell which
+// one reported what. The item ID is also the value --item wants.
+func itemLabel(item plaid.Item) string {
+	return fmt.Sprintf("%s (item %s)", item.InstitutionName, item.ItemID)
+}
+
+// accountLabel names an account in console output.
+//
+// The name alone does not identify one: Plaid passes through whatever the
+// bank calls the account, and Chase calls every credit card "CREDIT", so two
+// cards on one login print identically. The mask disambiguates them. It is
+// the last 2 to 4 characters of the account number, and is occasionally
+// absent, in which case the name is all there is.
+func accountLabel(name, mask string) string {
+	if mask == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (*%s)", name, mask)
+}
+
 // fetchItem syncs one Item and exports its accounts. It returns the number
 // of transactions written.
 func fetchItem(
@@ -143,7 +197,7 @@ func fetchItem(
 	dryRun bool,
 	days int,
 ) (int, error) {
-	stdout("%s\n", item.InstitutionName)
+	stdout("%s\n", itemLabel(item))
 
 	// A broken Item cannot be repaired here: update mode needs a browser.
 	status, err := client.FetchItemStatus(ctx, item.AccessToken)
@@ -165,7 +219,7 @@ func fetchItem(
 	srcAccounts := plaid.SourceAccounts(accounts, info)
 	for _, skipped := range plaid.SkippedAccounts(accounts) {
 		stdout("  skipping %s (%s/%s): not a bank or credit card account\n",
-			skipped.Name, skipped.Type, skipped.Subtype)
+			accountLabel(skipped.Name, skipped.Mask), skipped.Type, skipped.Subtype)
 	}
 	if len(srcAccounts) == 0 {
 		stdout("  no exportable accounts\n\n")
@@ -206,27 +260,45 @@ func fetchItem(
 
 	results := exporter.ExportAll(srcAccounts, byAccount)
 
+	// One account's failure abandons the whole Item. The cursor covers every
+	// account under it, so advancing it while one account's statement is
+	// missing would lose exactly that account's transactions. Every pending
+	// file goes, including those of the accounts that succeeded.
+	for _, r := range results {
+		if r.Err != nil {
+			removeAll(pendingPaths(results))
+			return 0, r.Err
+		}
+	}
+
+	// Every statement is complete. They take their final names together,
+	// before anything is recorded.
+	var renamed []string
+	if !dryRun {
+		var err error
+		renamed, err = commitFiles(results)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	exported := make(map[string][]string)
-	var written []string
 	total := 0
 
 	for i, r := range results {
 		acct := srcAccounts[i]
+		label := accountLabel(acct.Name, acct.LastFour)
 		switch {
-		case r.Err != nil:
-			removeAll(written)
-			return 0, r.Err
 		case r.Skipped:
-			stdout("  %s: no new transactions\n", r.AccountName)
+			stdout("  %s: no new transactions\n", label)
 		case dryRun:
 			total += r.NewTransactions
-			stdout("  %s: %d posted transaction(s) (dry run)\n", r.AccountName, r.NewTransactions)
+			stdout("  %s: %d posted transaction(s) (dry run)\n", label, r.NewTransactions)
 			printTransactions(r.Transactions)
 		default:
 			total += r.NewTransactions
 			exported[acct.ID] = r.ExportedIDs
-			written = append(written, r.FilePath)
-			stdout("  %s: %d new transaction(s) -> %s\n", r.AccountName, r.NewTransactions, r.FilePath)
+			stdout("  %s: %d new transaction(s) -> %s\n", label, r.NewTransactions, r.FilePath)
 		}
 	}
 
@@ -235,16 +307,54 @@ func fetchItem(
 		return total, nil
 	}
 
-	// The files exist. Recording them and advancing the cursor happen
-	// together, or not at all. If this fails, the files are removed and the
-	// cursor stays put, so the next run delivers the same transactions.
+	// The files exist under the names `map` reads. Recording them and
+	// advancing the cursor happen together, or not at all. If this fails, the
+	// files are removed and the cursor stays put, so the next run delivers the
+	// same transactions.
 	if err := store.CommitSync(string(env), item.ItemID, exported, result.NextCursor); err != nil {
-		removeAll(written)
+		removeAll(renamed)
 		return 0, err
 	}
 
 	stdout("\n")
 	return total, nil
+}
+
+// commitFiles renames every written statement onto its final name, and
+// reports the names that now exist.
+//
+// No filesystem renames a set of files atomically, so this is not all-or-
+// nothing in the way CommitSync is. It does not need to be. A rename is far
+// likelier to succeed than the write that preceded it — the disk space is
+// already spent and the directory entry already exists — so the window in
+// which only some of the files are visible is a few microseconds wide, and
+// nothing has been recorded while it is open. A rename that does fail undoes
+// the ones before it and discards the rest.
+func commitFiles(results []ofxexport.AccountResult) ([]string, error) {
+	var renamed []string
+	for i, r := range results {
+		if r.PendingPath == "" {
+			continue
+		}
+		if err := os.Rename(r.PendingPath, r.FilePath); err != nil {
+			removeAll(renamed)
+			removeAll(pendingPaths(results[i:]))
+			return nil, err
+		}
+		renamed = append(renamed, r.FilePath)
+	}
+	return renamed, nil
+}
+
+// pendingPaths names the written-but-not-yet-renamed files in a batch.
+func pendingPaths(results []ofxexport.AccountResult) []string {
+	var paths []string
+	for _, r := range results {
+		if r.PendingPath != "" {
+			paths = append(paths, r.PendingPath)
+		}
+	}
+	return paths
 }
 
 func relinkNeeded(env plaid.Environment, item plaid.Item) error {

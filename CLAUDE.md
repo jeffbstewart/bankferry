@@ -64,6 +64,38 @@ authenticator reported (never what was requested); every read requests the same;
 (e.g. a cleared PIN) surfaces as `touchvault.ErrUserVerificationMismatch`, not as corrupt
 ciphertext.
 
+### An Item is one login, not one institution
+`plaid-link` refuses by default to link an institution that already has an Item, before the
+exchange, because it is the exchange that creates the duplicate and spends a slot that never
+returns. That default is right for the common case — re-linking a login you already have
+recovers nothing and costs one of the ten.
+
+But it was wrong as an absolute, and `--duplicate-of <item id>` is the escape hatch: it names
+the existing Item the new one will sit beside, and `permitsDuplicate` honors it only when the
+named Item is among *that institution's* Items, so a permission to duplicate Capital One
+cannot license a second Chase picked by mistake in the browser. `plaid.FindItemsByInstitution`
+returns every match, never the first: with two Items at one institution, picking one by
+keyring order would be arbitrary.
+
+**Nothing can distinguish a new login from a re-link of an existing one.** A login's identity
+is not known until after the exchange, and the exchange is what spends the slot; Plaid's own
+duplicate detection compares account masks, which is post-exchange and therefore too late
+here. So `--duplicate-of` proves only that the operator knows the institution is already
+linked. With two Items at an institution, naming either permits a third. That limit is
+acknowledged, not fixed — the remaining guards are the operator's own intent, declared before
+the browser opens, and the typed production confirmation, which names what is being
+duplicated.
+
+Two consequences of the ordering are load-bearing:
+
+- **`--duplicate-of` resolves before the security key.** `cli.resolveDuplicateOf` runs before
+  `NewClient` unseals the production secret, so a mistyped item ID costs a re-run rather than
+  a gesture. Do not move it later.
+- **The refusal names the flag.** An operator with a genuine second login must not have to
+  read the source. It stays a refusal rather than an interactive prompt on purpose: a prompt
+  arrives mid-flow, with a public token burning and momentum carrying the operator through it,
+  which is the worst moment to consent to an irreversible spend.
+
 ### The link server is guarded four ways
 `plaid-link` and `plaid-relink` run an HTTP server that holds a `link_token` and can
 consume an irreplaceable Item. Anything that can route to it could otherwise drive Link
@@ -219,6 +251,32 @@ One `.ofx` file per account, named `{SanitizedInstitution}_{LastFour}_{Timestamp
 `CREDITCARDMSGSRSV1`. Transaction amounts are signed decimal strings (e.g. `"-45.00"`);
 `source` amounts are sign-flipped on the way into OFX.
 
+**Nothing may ever be written over an `.ofx` file.** None of the three parts of that name
+is unique — the timestamp is good only to one second — so two accounts sharing an
+institution and a mask collide. Two logins at one bank is the case that makes it reachable.
+Overwriting loses transactions *silently*: the replaced file's transactions are still
+recorded as exported and the cursor still advances past them, and Plaid never re-delivers
+them. Three things keep that shut, and all three are load-bearing:
+
+- **The final name must be free before anything is written** (`Exporter.Exists`). A rename
+  replaces its target on every OS this runs on, so checking at rename time is too late.
+- **The statement is written to `{final}.part` and renamed into place.** The pending name is
+  the final name plus a constant suffix and nothing else. That transform is injective, so
+  two accounts collide on it exactly when they would collide on the final name — which is
+  what makes the next point work. The suffix must not end in `.ofx`: `map` reads every
+  `.ofx` file in the directory, and a half-written statement is not one.
+- **The pending file is created with `O_EXCL`** (`cli.createExclusive`; never `os.Create`,
+  which truncates). Within one batch no final name exists yet, so the free-name check passes
+  for both colliding accounts; this is what catches them.
+
+A collision is refused, not disambiguated. If that refusal ever fires in practice, add a
+discriminator to the filename rather than weakening any of the above.
+
+Console output identifies accounts by name *and* mask (`cli.accountLabel`), and Items by
+institution *and* item ID (`cli.itemLabel`). Neither name identifies anything on its own:
+Chase calls every credit card "CREDIT", and two logins at one bank are two Items with the
+same institution name.
+
 ### Transaction type mapping
 `ofxexport.ofxTransactionType()` derives OFX `TRNTYPE` from the sign of the source amount:
 negative is `DEBIT`, otherwise `CREDIT`. Finer OFX types did not survive GnuCash import, and
@@ -300,6 +358,9 @@ All packages use the standard `testing` package. Key test patterns:
 `cli.Run()` dispatches on `os.Args[1]` (default: `"help"`). Run `help` for the full text; it
 is grouped and explains what each command costs.
 
+`plaid-link` takes `--duplicate-of <item id>` to link a second login at an already-linked
+institution; see "An Item is one login, not one institution" above.
+
 Plaid: `plaid-init`, `plaid-link`, `plaid-items`, `plaid-relink`, `plaid-reset-login`,
 `plaid-remove`, `plaid-export`, `plaid-verify-backup`. Production security key:
 `plaid-enroll-key`, `plaid-list-key-slots`, `plaid-delete-key-slot`. Fetching: `fetch`.
@@ -318,6 +379,16 @@ once its cursor passes it, so advancing first and crashing loses those transacti
 forever. Crashing the other way is harmless: the next run receives the same transactions,
 rewrites the files, and GnuCash deduplicates them on FITID. If `CommitSync` fails, the files
 just written are removed.
+
+The write is two-phase, in three steps per Item: every account's statement is written to its
+`.part` file, then `cli.commitFiles` renames all of them into place, and only then does
+`CommitSync` run. The cursor covers every account under an Item, so one account's failure
+abandons the whole Item — every `.part` file goes, including those of the accounts that
+succeeded, because committing a cursor over a partial set loses the missing account's
+transactions. No filesystem renames a set atomically and this does not pretend to: a rename
+is far likelier to succeed than the write before it, so the window where only some files are
+visible is microseconds wide and nothing is recorded while it is open. A rename that does
+fail undoes the ones before it.
 
 `ofxexport` therefore does **not** record what it exported. It returns `ExportedIDs`, and the
 caller commits them together with the cursor in one database transaction. Do not give

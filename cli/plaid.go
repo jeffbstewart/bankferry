@@ -65,19 +65,71 @@ func isLoopbackAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// resolveDuplicateOf validates --duplicate-of against the stored Items and
+// returns it, or exits explaining why it cannot be honored.
+//
+// It resolves before anything is spent — before the browser opens, and before
+// NewClient unseals the production secret and costs a touch. An operator who
+// mistypes an item ID should lose a re-run, not a gesture, and certainly not
+// an Item.
+//
+// The named Item only has to exist here. Whether it sits at the institution
+// the operator eventually picks in the browser is not knowable yet, and is
+// checked at the exchange, which is the moment that matters.
+func resolveDuplicateOf(wanted string, items []plaid.Item, env plaid.Environment) string {
+	if wanted == "" {
+		return ""
+	}
+	for _, item := range items {
+		if item.ItemID == wanted {
+			return wanted
+		}
+	}
+
+	stderr("Error: --duplicate-of %s names no Item linked in %s.\n", wanted, env)
+	if len(items) == 0 {
+		stderr("Nothing is linked here, so no institution can be duplicated.\n")
+		os.Exit(1)
+	}
+	stderr("It must name the existing Item the new one will sit beside:\n")
+	for _, item := range items {
+		stderr("  %s  %s\n", item.ItemID, item.InstitutionName)
+	}
+	os.Exit(1)
+	return ""
+}
+
 // confirmProductionLink stops an accidental production link.
 //
 // Linking is the one irreversible, billable act in this tool. A production
 // account is allowed ten Items for its lifetime, removing one does not free
 // its slot, and linking the same institution twice creates a duplicate
 // rather than reusing the first.
-func confirmProductionLink(env plaid.Environment) {
+//
+// When --duplicate-of is in play the operator is deliberately creating that
+// duplicate, so the prompt says what they are duplicating. A confirmation
+// that describes the wrong act is worth nothing.
+func confirmProductionLink(env plaid.Environment, duplicateOf string, items []plaid.Item) {
 	if env != plaid.Production {
 		return
 	}
 
 	stdout("\nThis will consume one of the ten Plaid Items allowed for the lifetime\n")
 	stdout("of this account. Removing an Item does not return its slot.\n\n")
+
+	if duplicateOf != "" {
+		for _, item := range items {
+			if item.ItemID != duplicateOf {
+				continue
+			}
+			stdout("You are linking a second login at %s, alongside item %s.\n",
+				item.InstitutionName, item.ItemID)
+			stdout("If it is the same login as that Item, this spends a slot for a\n")
+			stdout("duplicate of what you already have, and nothing can detect that\n")
+			stdout("until after the slot is gone.\n\n")
+			break
+		}
+	}
 
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		stderr("Refusing to link a production Item without an interactive confirmation.\n")
@@ -102,6 +154,8 @@ func runPlaidLink(args []string) {
 	fs := newFlags("plaid-link")
 	envStr := envFlag(fs)
 	uri, bind := redirectAndBindFlags(fs)
+	dupOf := fs.String("duplicate-of", "",
+		"item ID of an existing Item at the same institution, to link a second login beside it")
 	parseFlags(fs, args)
 
 	env := requireEnv(*envStr)
@@ -131,12 +185,16 @@ func runPlaidLink(args []string) {
 		stdout("\n")
 	}
 
+	// Resolve --duplicate-of here, before the browser and before the security
+	// key: a typo in an item ID must cost a re-run, not a gesture.
+	opts.DuplicateOfItemID = resolveDuplicateOf(*dupOf, items, env)
+
 	// Confirm before touching the security key. Unsealing the production secret
 	// in NewClient costs a physical gesture; prompting for the typed
 	// confirmation only afterward would spend that gesture on a link the
 	// operator then aborts, and would train touch-before-read — the habit the
 	// gesture discipline exists to prevent. plaid-remove confirms first too.
-	confirmProductionLink(env)
+	confirmProductionLink(env, opts.DuplicateOfItemID, items)
 
 	client, err := plaid.NewClient(env, plaidCredentials(env))
 	if err != nil {
