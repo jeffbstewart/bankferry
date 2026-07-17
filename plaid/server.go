@@ -70,6 +70,26 @@ type LinkOptions struct {
 	// AccessKey is the one-time key that admits a browser to the entry page.
 	// Generated when empty; supplied by tests.
 	AccessKey string
+
+	// DuplicateOfItemID permits linking an institution that already has an
+	// Item, by naming the Item the new one will sit beside. Empty refuses
+	// every duplicate, which is the default.
+	//
+	// It names an Item rather than being a bare "allow duplicates" switch so
+	// the permission covers exactly the institution the operator meant. If
+	// they pick a different already-linked bank in the browser — the misclick
+	// this guard exists for — the named Item is not among that institution's,
+	// and the exchange is still refused.
+	//
+	// What it cannot do is say *which* login is being added, and that limit
+	// bites once an institution holds two Items: naming either of them
+	// permits a third, because all this proves is that the operator knows the
+	// institution is already linked. Nothing here can do better. An Item is
+	// one login, the login's identity is not known until after the exchange,
+	// and the exchange is what spends the slot. So re-linking a login you
+	// already have, rather than adding a new one, is indistinguishable from
+	// the real thing and costs one of the ten permanently.
+	DuplicateOfItemID string
 }
 
 func (o LinkOptions) bindAddr() string {
@@ -368,7 +388,7 @@ func StartLinkServer(ctx context.Context, env Environment, client *plaidsdk.APIC
 	var result LinkResult
 	err = serveLink(ctx, env, data, opts, func(mux *http.ServeMux, session *linkSession, finish func()) {
 		mux.HandleFunc("/exchange", session.guard("an exchange", func(w http.ResponseWriter, r *http.Request) {
-			handleExchange(ctx, w, r, env, client, session, func(res LinkResult) {
+			handleExchange(ctx, w, r, env, client, session, opts.DuplicateOfItemID, func(res LinkResult) {
 				result = res
 				finish()
 			})
@@ -622,6 +642,53 @@ func sanitizeHost(host string) string {
 	return cleaned
 }
 
+// permitsDuplicate reports whether allowDuplicateOf names one of the Items
+// already linked at this institution.
+//
+// Matching against *this institution's* Items is the point. A permission to
+// duplicate Capital One must not license linking Chase a second time when
+// the operator picks the wrong bank in the browser, and that misclick is the
+// mistake the guard exists for.
+func permitsDuplicate(existing []Item, allowDuplicateOf string) bool {
+	if allowDuplicateOf == "" {
+		return false
+	}
+	for _, item := range existing {
+		if item.ItemID == allowDuplicateOf {
+			return true
+		}
+	}
+	return false
+}
+
+func itemIDs(items []Item) string {
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = "item " + item.ItemID
+	}
+	return strings.Join(ids, ", ")
+}
+
+// duplicateRefusal explains the refusal and names the way through it.
+//
+// The way through has to be in the message. Re-linking the same login is the
+// common case and is a mistake, so the refusal stays the default — but a
+// second login at one bank is legitimate, and an operator who has one cannot
+// be left reading the source to find that out. Naming the flag here keeps the
+// decision cold: they re-run deliberately rather than being asked to consent
+// mid-flow, with a public token burning and momentum carrying them through.
+func duplicateRefusal(institutionName string, existing []Item) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s is already linked (%s). Nothing was exchanged, so no Item was consumed.\n\n",
+		institutionName, itemIDs(existing))
+	b.WriteString("If this was a mistake, nothing more is needed.\n\n")
+	b.WriteString("If you meant to link a second, different login at this institution, that is\n")
+	b.WriteString("a separate Item and costs another of the ten. Re-run naming the Item the new\n")
+	b.WriteString("one sits beside:\n\n")
+	fmt.Fprintf(&b, "    bankferry plaid-link --env <env> --duplicate-of %s\n", existing[0].ItemID)
+	return b.String()
+}
+
 // handleExchange turns a public_token into a stored Item.
 //
 // Ordering is deliberate. The duplicate check runs before the exchange,
@@ -636,6 +703,7 @@ func handleExchange(
 	env Environment,
 	client *plaidsdk.APIClient,
 	session *linkSession,
+	allowDuplicateOf string,
 	finish func(LinkResult),
 ) {
 	if r.Method != http.MethodPost {
@@ -655,20 +723,23 @@ func handleExchange(
 
 	// Refuse before exchanging: it is the exchange that creates a duplicate
 	// Item, and a duplicate spends a slot that never returns.
-	existing, found, err := FindItemByInstitution(env, req.InstitutionID)
+	existing, err := FindItemsByInstitution(env, req.InstitutionID)
 	if err != nil {
 		log.Printf("plaid: checking for an existing item: %v", err)
 		http.Error(w, "could not check existing items; nothing was exchanged",
 			http.StatusInternalServerError)
 		return
 	}
-	if found {
-		log.Printf("plaid: refusing to link %s (%s): already linked as item %s",
-			req.InstitutionName, req.InstitutionID, existing.ItemID)
-		http.Error(w, fmt.Sprintf(
-			"%s is already linked (item %s). Nothing was exchanged, so no Item was consumed.",
-			existing.InstitutionName, existing.ItemID), http.StatusConflict)
+	if len(existing) > 0 && !permitsDuplicate(existing, allowDuplicateOf) {
+		log.Printf("plaid: refusing to link %s (%s): already linked as %s",
+			req.InstitutionName, req.InstitutionID, itemIDs(existing))
+		http.Error(w, duplicateRefusal(req.InstitutionName, existing), http.StatusConflict)
 		return
+	}
+	if len(existing) > 0 {
+		log.Printf("plaid: linking a second login at %s (%s), alongside %s, as permitted by "+
+			"--duplicate-of %s", req.InstitutionName, req.InstitutionID,
+			itemIDs(existing), allowDuplicateOf)
 	}
 
 	// One exchange per run. A replay, or a race with a second callback, must

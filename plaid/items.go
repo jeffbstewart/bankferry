@@ -264,25 +264,33 @@ func writeItem(env Environment, item Item) error {
 	return nil
 }
 
-// FindItemByInstitution returns the stored Item for an institution, if
-// any. Link creates a *duplicate* Item when the same institution is
-// linked twice and an access token is requested, so callers check this
-// before exchanging a public_token.
-func FindItemByInstitution(env Environment, institutionID string) (Item, bool, error) {
+// FindItemsByInstitution returns every stored Item for an institution.
+//
+// Link creates a *duplicate* Item when the same institution is linked twice
+// and an access token is requested, so callers check this before exchanging
+// a public_token. A duplicate is usually a mistake and is refused, but it is
+// not always one: an Item is one login, not one institution, so a second
+// login at the same bank is legitimately a second Item. The caller decides,
+// which is why this reports what is there rather than a verdict.
+//
+// It returns all matches, not the first. Two Items at one institution are
+// possible, and picking one of them by keyring order would be arbitrary.
+func FindItemsByInstitution(env Environment, institutionID string) ([]Item, error) {
 	if institutionID == "" {
-		return Item{}, false, nil
+		return nil, nil
 	}
 
 	items, _, err := LoadItems(env)
 	if err != nil {
-		return Item{}, false, err
+		return nil, err
 	}
+	var found []Item
 	for _, item := range items {
 		if item.InstitutionID == institutionID {
-			return item, true, nil
+			found = append(found, item)
 		}
 	}
-	return Item{}, false, nil
+	return found, nil
 }
 
 // DeleteItem removes one Item's keyring entry. It does not call Plaid's
