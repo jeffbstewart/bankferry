@@ -120,6 +120,17 @@ The opposite order is safe: crash after writing files and the next run receives 
 transactions, rewrites them, and GnuCash deduplicates on FITID. That only holds because the
 FITID is stable.
 
+The same reasoning bans overwriting an `.ofx` file. A filename carries the institution, the
+account mask, and a timestamp good to one second, and two accounts can share all three — two
+logins at one bank, most plausibly. Overwriting one would be silent: the replaced file's
+transactions are still recorded as exported and the cursor still advances past them. So each
+account's statement is written to a `.part` file whose name is the final name plus a
+constant suffix, every one of them is renamed into place together, and only then does the
+cursor move. The final name must be free before the write, and the `.part` file is created
+exclusively — which catches two accounts that would collide, because deriving the pending
+name from the final one means they collide there first. A collision is refused, never
+resolved by guessing.
+
 ### Plaid access tokens cannot be recovered
 
 No endpoint returns an access token given an `item_id`. Lose the token and the Item can

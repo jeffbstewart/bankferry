@@ -3,6 +3,7 @@ package ofxexport
 import (
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -92,12 +93,16 @@ func newPendingTxn(id string) source.Transaction {
 	}
 }
 
+// newExporter builds an Exporter over an empty directory: no final name is
+// ever taken. Tests that care about a collision override Exists.
 func newExporter(store ExportStore, dryRun bool, createFile FileCreator) *Exporter {
 	return &Exporter{
 		Store:      store,
 		OutputDir:  "/tmp/ofx",
 		DryRun:     dryRun,
 		CreateFile: createFile,
+		Exists:     func(string) (bool, error) { return false, nil },
+		Now:        time.Now,
 	}
 }
 
@@ -660,5 +665,127 @@ func TestSanitizeFilename(t *testing.T) {
 		if got := sanitizeFilename(tc.input); got != tc.want {
 			t.Errorf("sanitizeFilename(%q) = %q, want %q", tc.input, got, tc.want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Filename collisions
+//
+// A filename carries the institution, the account mask, and a timestamp good
+// to one second. Two accounts can share all three, and the loss that follows
+// is silent: the second file replaces the first, and the caller records both
+// accounts' transactions as exported and advances the cursor past them.
+// ---------------------------------------------------------------------------
+
+// recordingFileCreator reports the paths it was asked to create.
+func recordingFileCreator(err error) (FileCreator, *[]string) {
+	var paths []string
+	return func(path string) (io.WriteCloser, error) {
+		paths = append(paths, path)
+		if err != nil {
+			return nil, err
+		}
+		return &mockWriteCloser{}, nil
+	}, &paths
+}
+
+// The statement is written under a name the `map` command does not read, and
+// that name is the final one plus a constant suffix. The transform must stay
+// injective: it is what makes the exclusive create below a collision check.
+// Two accounts that would collide on the final name collide on this one.
+func TestExportAccount_WritesToPendingNameDerivedFromFinal(t *testing.T) {
+	acct := newTestAccount(source.Depository, source.Checking)
+	txn := newPostedTxn("txn_1", "25.00", "Coffee", 2025, time.June, 3)
+	fc, paths := recordingFileCreator(nil)
+
+	result := newExporter(emptyStore(), false, fc).ExportAccount(acct, []source.Transaction{txn})
+
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	if result.FilePath == "" {
+		t.Fatal("expected a final path")
+	}
+	if want := result.FilePath + pendingSuffix; result.PendingPath != want {
+		t.Errorf("PendingPath = %q, want %q", result.PendingPath, want)
+	}
+	if len(*paths) != 1 || (*paths)[0] != result.PendingPath {
+		t.Errorf("created %v, want only the pending path %q", *paths, result.PendingPath)
+	}
+	if strings.HasSuffix(strings.ToLower(result.PendingPath), ".ofx") {
+		t.Errorf("PendingPath %q ends in .ofx; map would read a half-written statement",
+			result.PendingPath)
+	}
+}
+
+// A rename replaces its target. Checking at rename time would be too late, so
+// a taken final name is refused before anything is written.
+func TestExportAccount_RefusesATakenFinalName(t *testing.T) {
+	acct := newTestAccount(source.Depository, source.Checking)
+	txn := newPostedTxn("txn_1", "25.00", "Coffee", 2025, time.June, 3)
+	fc, paths := recordingFileCreator(nil)
+
+	e := newExporter(emptyStore(), false, fc)
+	e.Exists = func(string) (bool, error) { return true, nil }
+	result := e.ExportAccount(acct, []source.Transaction{txn})
+
+	if result.Err == nil {
+		t.Fatal("expected a refusal when the final name is taken")
+	}
+	if !errors.Is(result.Err, os.ErrExist) {
+		t.Errorf("Err = %v, want it to wrap os.ErrExist", result.Err)
+	}
+	if len(*paths) != 0 {
+		t.Errorf("wrote %v; nothing may be written when the name is taken", *paths)
+	}
+	if result.PendingPath != "" || result.FilePath != "" {
+		t.Errorf("PendingPath = %q, FilePath = %q; want neither reported",
+			result.PendingPath, result.FilePath)
+	}
+}
+
+// Not being able to tell whether the name is taken is not the same as it
+// being free. Reporting false here would let the rename destroy a file.
+func TestExportAccount_ExistsFailureIsNotTreatedAsFree(t *testing.T) {
+	acct := newTestAccount(source.Depository, source.Checking)
+	txn := newPostedTxn("txn_1", "25.00", "Coffee", 2025, time.June, 3)
+	fc, paths := recordingFileCreator(nil)
+
+	e := newExporter(emptyStore(), false, fc)
+	e.Exists = func(string) (bool, error) { return false, errors.New("permission denied") }
+	result := e.ExportAccount(acct, []source.Transaction{txn})
+
+	if result.Err == nil {
+		t.Fatal("expected an error when the existence check fails")
+	}
+	if len(*paths) != 0 {
+		t.Errorf("wrote %v; nothing may be written when the check failed", *paths)
+	}
+}
+
+// Within one batch no final name exists yet, so the free-name check passes
+// for both of two colliding accounts. The exclusive create is what catches
+// them, and it can only do so because the pending name is derived from the
+// final one.
+func TestExportAccount_RefusesAPendingCollision(t *testing.T) {
+	acct := newTestAccount(source.Credit, source.CreditCard)
+	txn := newPostedTxn("txn_1", "25.00", "Coffee", 2025, time.June, 3)
+	fc, _ := recordingFileCreator(os.ErrExist)
+
+	result := newExporter(emptyStore(), false, fc).ExportAccount(acct, []source.Transaction{txn})
+
+	if result.Err == nil {
+		t.Fatal("expected a refusal when the pending name is taken")
+	}
+	if !errors.Is(result.Err, os.ErrExist) {
+		t.Errorf("Err = %v, want it to wrap os.ErrExist", result.Err)
+	}
+	// The message has to say which account and which mask collided; the
+	// operator's only remedy is to know that.
+	if !strings.Contains(result.Err.Error(), "1234") {
+		t.Errorf("Err = %v, want it to name the mask", result.Err)
+	}
+	if result.PendingPath != "" {
+		t.Errorf("PendingPath = %q, want none reported for a refused export", result.PendingPath)
 	}
 }

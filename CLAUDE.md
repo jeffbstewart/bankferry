@@ -219,6 +219,32 @@ One `.ofx` file per account, named `{SanitizedInstitution}_{LastFour}_{Timestamp
 `CREDITCARDMSGSRSV1`. Transaction amounts are signed decimal strings (e.g. `"-45.00"`);
 `source` amounts are sign-flipped on the way into OFX.
 
+**Nothing may ever be written over an `.ofx` file.** None of the three parts of that name
+is unique — the timestamp is good only to one second — so two accounts sharing an
+institution and a mask collide. Two logins at one bank is the case that makes it reachable.
+Overwriting loses transactions *silently*: the replaced file's transactions are still
+recorded as exported and the cursor still advances past them, and Plaid never re-delivers
+them. Three things keep that shut, and all three are load-bearing:
+
+- **The final name must be free before anything is written** (`Exporter.Exists`). A rename
+  replaces its target on every OS this runs on, so checking at rename time is too late.
+- **The statement is written to `{final}.part` and renamed into place.** The pending name is
+  the final name plus a constant suffix and nothing else. That transform is injective, so
+  two accounts collide on it exactly when they would collide on the final name — which is
+  what makes the next point work. The suffix must not end in `.ofx`: `map` reads every
+  `.ofx` file in the directory, and a half-written statement is not one.
+- **The pending file is created with `O_EXCL`** (`cli.createExclusive`; never `os.Create`,
+  which truncates). Within one batch no final name exists yet, so the free-name check passes
+  for both colliding accounts; this is what catches them.
+
+A collision is refused, not disambiguated. If that refusal ever fires in practice, add a
+discriminator to the filename rather than weakening any of the above.
+
+Console output identifies accounts by name *and* mask (`cli.accountLabel`), and Items by
+institution *and* item ID (`cli.itemLabel`). Neither name identifies anything on its own:
+Chase calls every credit card "CREDIT", and two logins at one bank are two Items with the
+same institution name.
+
 ### Transaction type mapping
 `ofxexport.ofxTransactionType()` derives OFX `TRNTYPE` from the sign of the source amount:
 negative is `DEBIT`, otherwise `CREDIT`. Finer OFX types did not survive GnuCash import, and
@@ -318,6 +344,16 @@ once its cursor passes it, so advancing first and crashing loses those transacti
 forever. Crashing the other way is harmless: the next run receives the same transactions,
 rewrites the files, and GnuCash deduplicates them on FITID. If `CommitSync` fails, the files
 just written are removed.
+
+The write is two-phase, in three steps per Item: every account's statement is written to its
+`.part` file, then `cli.commitFiles` renames all of them into place, and only then does
+`CommitSync` run. The cursor covers every account under an Item, so one account's failure
+abandons the whole Item — every `.part` file goes, including those of the accounts that
+succeeded, because committing a cursor over a partial set loses the missing account's
+transactions. No filesystem renames a set atomically and this does not pretend to: a rename
+is far likelier to succeed than the write before it, so the window where only some files are
+visible is microseconds wide and nothing is recorded while it is open. A rename that does
+fail undoes the ones before it.
 
 `ofxexport` therefore does **not** record what it exported. It returns `ExportedIDs`, and the
 caller commits them together with the cursor in one database transaction. Do not give
