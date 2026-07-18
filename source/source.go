@@ -10,8 +10,7 @@ import (
 )
 
 // AccountType distinguishes deposit accounts from lines of credit.
-// It selects which OFX message set a statement is written into, and with
-// it the sign convention of every amount in that statement.
+// It selects which OFX message set a statement is written into.
 type AccountType string
 
 const (
@@ -72,10 +71,10 @@ type Transaction struct {
 	// money arriving is negative. That is the convention Plaid uses, so
 	// an adapter copies it through untouched.
 	//
-	// It is deliberately not the OFX convention, because OFX has no single
-	// convention: a withdrawal is negative on a bank statement while a
-	// charge is positive on a credit card statement. Only the writer knows
-	// which statement it is producing, so only the writer converts.
+	// It is deliberately the opposite of the OFX convention, in which
+	// TRNAMT signs money leaving the account negative on every statement
+	// type — a credit card charge exactly like a bank withdrawal. The OFX
+	// writer applies that flip; adapters never do.
 	Amount money.Amount
 
 	Date civildate.ISO8601Date

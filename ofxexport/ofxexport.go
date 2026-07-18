@@ -255,11 +255,11 @@ func removeFile(path string) {
 }
 
 func (e *Exporter) buildStatement(acct source.Account, newTxns, allPosted []source.Transaction, today civildate.ISO8601Date) (ofx.Statement, error) {
-	// The OFX sign convention depends on which statement is being written,
-	// so it is applied here rather than in an adapter.
+	// Source amounts sign money leaving the account positive; OFX signs it
+	// negative. The flip is applied here, in the writer, and nowhere else.
 	ofxTxns := make([]ofx.Transaction, len(newTxns))
 	for i, txn := range newTxns {
-		amount, err := ofxAmount(acct.Type, txn.Amount)
+		amount, err := ofxAmount(txn.Amount)
 		if err != nil {
 			return ofx.Statement{}, fmt.Errorf("transaction %s amount: %w", txn.ID, err)
 		}
@@ -340,17 +340,18 @@ func (e *Exporter) buildStatement(acct source.Account, newTxns, allPosted []sour
 }
 
 // ofxAmount converts a source amount, in which money leaving the account
-// is positive, into the TRNAMT convention of the statement being written.
+// is positive, into the OFX TRNAMT convention, in which money leaving the
+// account is negative. The negation is unconditional: TRNAMT is signed
+// from the account holder's perspective on every statement type, so a
+// credit card charge is negative exactly like a bank withdrawal.
 //
-// OFX has no single sign convention. On a bank statement TRNAMT is signed
-// from the account's perspective, so a withdrawal is negative. On a credit
-// card statement a charge increases what is owed and is written positive.
-// Negating unconditionally, as this code once did, produced correct credit
-// card statements and inverted every bank transaction.
-func ofxAmount(acctType source.AccountType, amount money.Amount) (string, error) {
-	if acctType == source.Credit {
-		return amount.Exact()
-	}
+// This code once wrote credit card charges positive, on the theory that a
+// charge increases what is owed. The first real GnuCash import proved that
+// wrong: every positive charge landed in the register's Payment column.
+// The Teller-era exporter negated unconditionally, and months of real
+// credit card imports validated it. Do not bring the account-type branch
+// back without evidence from an actual import.
+func ofxAmount(amount money.Amount) (string, error) {
 	return amount.Neg().Exact()
 }
 

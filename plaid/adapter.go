@@ -100,7 +100,7 @@ func sourceSubtype(subtype string) source.AccountSubtype {
 // The amount passes through untouched. Plaid signs money leaving the
 // account as positive, and that is exactly what source.Transaction
 // documents, so the adapter performs no negation at all. The OFX writer
-// applies the sign convention of whichever statement it is producing.
+// flips the sign once, into OFX's money-out-is-negative convention.
 //
 // Description carries Plaid's raw `name` and MerchantName carries the
 // normalized `merchant_name`. Both travel downstream: the raw descriptor is

@@ -473,43 +473,37 @@ func TestOFXTransactionType(t *testing.T) {
 	}
 }
 
-// TRNAMT, unlike TRNTYPE, does depend on the statement type. A charge on a
-// credit card is written positive; a withdrawal from a bank account is
-// written negative. Both are the same source amount and both are DEBIT.
+// TRNAMT, like TRNTYPE, does not depend on the statement type: money
+// leaving the account is negative whether it left a checking account or a
+// credit line.
 //
-// The code once negated unconditionally, which produced correct credit card
-// statements and turned every bank withdrawal into a deposit. This test
+// The code once wrote credit card charges positive, keyed on the account
+// type. The first real GnuCash import (2026-07-18) proved that wrong:
+// every positive charge landed in the register's Payment column. This test
 // exists so that cannot come back.
-func TestOFXAmount_SignDependsOnStatementType(t *testing.T) {
-	moneyOut := usd("25.00")
-	moneyIn := usd("-25.00")
-
+func TestOFXAmount_NegatesUnconditionally(t *testing.T) {
 	cases := []struct {
-		name     string
-		acctType source.AccountType
-		amount   money.Amount
-		want     string
+		name   string
+		amount money.Amount
+		want   string
 	}{
-		{"bank withdrawal is negative", source.Depository, moneyOut, "-25.00"},
-		{"bank deposit is positive", source.Depository, moneyIn, "25.00"},
-		{"credit card charge is positive", source.Credit, moneyOut, "25.00"},
-		{"credit card payment is negative", source.Credit, moneyIn, "-25.00"},
+		{"money out is negative", usd("25.00"), "-25.00"},
+		{"money in is positive", usd("-25.00"), "25.00"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ofxAmount(tc.acctType, tc.amount)
+			got, err := ofxAmount(tc.amount)
 			if err != nil {
 				t.Fatalf("ofxAmount: %v", err)
 			}
 			if got != tc.want {
-				t.Errorf("ofxAmount(%s, %s) = %q, want %q",
-					tc.acctType, tc.amount, got, tc.want)
+				t.Errorf("ofxAmount(%s) = %q, want %q", tc.amount, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestExportAccount_CreditCardChargeIsPositiveDebit(t *testing.T) {
+func TestExportAccount_CreditCardChargeIsNegativeDebit(t *testing.T) {
 	acct := newTestAccount(source.Credit, source.CreditCard)
 	txn := newPostedTxn("txn_1", "25.00", "Coffee", 2025, time.June, 3)
 	fc, wc := successFileCreator()
@@ -522,8 +516,8 @@ func TestExportAccount_CreditCardChargeIsPositiveDebit(t *testing.T) {
 	if !strings.Contains(out, "<TRNTYPE>DEBIT</TRNTYPE>") {
 		t.Error("expected TRNTYPE DEBIT for money leaving the account")
 	}
-	if !strings.Contains(out, "<TRNAMT>25.00</TRNAMT>") {
-		t.Error("expected TRNAMT 25.00 for a credit card charge")
+	if !strings.Contains(out, "<TRNAMT>-25.00</TRNAMT>") {
+		t.Error("expected TRNAMT -25.00 for a credit card charge")
 	}
 }
 
@@ -553,7 +547,7 @@ func TestExportAccount_AmountIsNotRounded(t *testing.T) {
 	if r := newExporter(emptyStore(), false, fc).ExportAccount(acct, []source.Transaction{txn}); r.Err != nil {
 		t.Fatalf("unexpected error: %v", r.Err)
 	}
-	if !strings.Contains(wc.buf.String(), "<TRNAMT>23631.9805</TRNAMT>") {
+	if !strings.Contains(wc.buf.String(), "<TRNAMT>-23631.9805</TRNAMT>") {
 		t.Error("expected the exact amount, unrounded, in TRNAMT")
 	}
 }
