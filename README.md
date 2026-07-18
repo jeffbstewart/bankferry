@@ -216,11 +216,13 @@ Plaid sends JSON *numbers* (`89.4`, `23631.9805`), and the official Go SDK decod
 `float64`. `2.675` becomes `2.67`. This project decodes with `json.Number` into a
 fixed-point `money.Amount`.
 
-### There is no single OFX sign convention
+### OFX signs from the account holder's perspective
 
-A bank `TRNAMT` is negative for money leaving the account; a credit-card `TRNAMT` is
-positive for a charge. Plaid's convention is the opposite of both — money leaving is
-positive. The sign flip lives in the OFX writer, keyed on statement type, and nowhere else.
+`TRNAMT` is negative for money leaving the account on every statement type — a credit-card
+charge exactly like a bank withdrawal. (An earlier version wrote charges positive, keyed on
+statement type; GnuCash filed every charge as a payment.) Plaid's convention is the
+opposite — money leaving is positive. The sign flip lives in the OFX writer and nowhere
+else.
 
 ### `wincred` below v1.2.3 corrupts memory
 

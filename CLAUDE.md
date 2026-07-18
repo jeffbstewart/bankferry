@@ -249,7 +249,10 @@ not let a dependency resolution drag `wincred` back below v1.2.3.
 One `.ofx` file per account, named `{SanitizedInstitution}_{LastFour}_{Timestamp}.ofx`. OFX
 2.2 XML format. Bank accounts produce `BANKMSGSRSV1`; credit cards produce
 `CREDITCARDMSGSRSV1`. Transaction amounts are signed decimal strings (e.g. `"-45.00"`);
-`source` amounts are sign-flipped on the way into OFX.
+`source` amounts are sign-flipped on the way into OFX, **unconditionally** — TRNAMT signs
+money leaving the account negative on every statement type, a credit card charge exactly
+like a bank withdrawal. An earlier version wrote charges positive, keyed on account type,
+and GnuCash filed every charge as a payment; do not bring the branch back.
 
 **Nothing may ever be written over an `.ofx` file.** None of the three parts of that name
 is unique — the timestamp is good only to one second — so two accounts sharing an
@@ -279,7 +282,8 @@ same institution name.
 
 ### Transaction type mapping
 `ofxexport.ofxTransactionType()` derives OFX `TRNTYPE` from the sign of the source amount:
-negative is `DEBIT`, otherwise `CREDIT`. Finer OFX types did not survive GnuCash import, and
+money out (positive) is `DEBIT`, money in (negative) is `CREDIT`, and it does not depend on
+the statement type. Finer OFX types did not survive GnuCash import, and
 providers vary in what metadata they expose. `ofxexport.mapAccountSubtype()` maps source
 account subtypes to OFX ACCTTYPE (checking/savings/money_market, everything else defaults to
 checking).
