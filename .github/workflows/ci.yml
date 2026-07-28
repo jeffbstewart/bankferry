@@ -1,43 +1,43 @@
-name: CI
+# The presubmit suite (cloister docs/grange.md R3): the "verify" check
+# the main ruleset requires.  Zero secrets by policy (R6) — the forge
+# lint audits Actions secrets to empty.
+name: ci
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
-
-permissions:
-  contents: read
 
 jobs:
-  # bankferry runs on Windows: the security-key path calls webauthn.dll, which
-  # exists only there. So CI tests on Windows, with no bank linked and no key
-  # present. That is what the fakes are for: a fake authenticator reaches every
-  # function the real key guards, and the keyring and Plaid clients are exercised
-  # through mocks, so the suite is hermetic.
-  test:
-    name: test
+  verify:
+    # Windows, matching the CI this replaces: the security-key path calls
+    # webauthn.dll, which exists only there.  The suite stays hermetic —
+    # fakes for the authenticator, mocks for the keyring and Plaid.
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          check-latest: true
 
-      - name: gofmt
-        shell: bash
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt'd:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - name: Build
+        run: go build ./...
 
-      - name: go vet
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
         run: go vet ./...
 
-      - name: go test
-        run: go test ./...
+      # The forge's own merge-path protections (cloister docs/grange.md
+      # R1-R8), asserted against this repo's pinned expectations.  The
+      # workflow token cannot read collaborator roles or Actions secrets,
+      # so those report UNVERIFIED (-allow-unverified downgrades them to
+      # warnings); the operator runs the same lint with an admin token
+      # for the full verdict.  Any readable rule that drifts still fails
+      # the PR.
+      - name: Forge lint (merge-path protections)
+        env:
+          FORGE_LINT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go run github.com/jeffbstewart/cloister/cmd/forge-lint@main -config .github/forge-lint.yaml -allow-unverified
