@@ -20,8 +20,8 @@ accepts exactly `1`).
 
 ## Status
 
-The writer is **brokerferry**, a second binary built from this module under
-its own Plaid credentials (see `CLAUDE.md`, "Two programs, one module"). Its
+The writer is **brokerferry**, a second binary built from this module with
+its own Items and vault (see `CLAUDE.md`, "Two programs, one module"). Its
 `investments` verb:
 
 1. For each of brokerferry's Items, calls `/investments/holdings/get` and

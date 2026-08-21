@@ -6,10 +6,11 @@ import "github.com/jeffbstewart/bankferry/plaid"
 // and investment transactions, written as an investments snapshot for
 // finance2.
 //
-// It links under its own Plaid developer account, so its credentials,
-// Items, vault and database are its own. The keyring service and relying
-// party are new names with nothing behind them yet; once a key is enrolled
-// or an Item linked they are as fixed as bankferry's.
+// Its keyring entries, Items, vault and database are its own; the Plaid
+// account behind them is the same one bankferry uses, so the ten-Item cap
+// is shared (see CLAUDE.md, "Two programs, one module"). The keyring
+// service and relying party are as fixed as bankferry's now that a key is
+// enrolled and Items are linked under them.
 func Brokerferry() App {
 	return App{
 		Name:           "brokerferry",

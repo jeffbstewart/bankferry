@@ -38,30 +38,47 @@ go.work.sum
 .idea/
 .claude/
 
-# Built binary. The stock *.exe covers Windows; this catches the extensionless
-# Unix/macOS build (go build -o bankferry).
+# Each binary is run from its own directory under cmd/ with its own .env, so
+# every local artifact below may appear at the repo root OR under cmd/<name>/.
+# Patterns are therefore unanchored unless they would otherwise match a
+# source directory.
+
+# Built binaries. The stock *.exe covers Windows; these catch the
+# extensionless Unix/macOS builds. Anchored: an unanchored "bankferry" would
+# ignore the cmd/bankferry source directory.
 /bankferry
+/brokerferry
+/cmd/bankferry/bankferry
+/cmd/brokerferry/brokerferry
 
-# Local SQLite database and its WAL/SHM sidecars. The path is set in .env; this
-# also matches casing variants like bankFerry.db.
-/[Bb]ank[Ff]erry.db*
+# Local SQLite databases and their WAL/SHM sidecars, wherever a binary was
+# run from. bankferry's holds the sync cursors; both hold the sealed
+# production vault. Nothing in this repository is a committed .db.
+*.db
+*.db-shm
+*.db-wal
 
-# Fetched and rewritten OFX files (OFX_OUTPUT_DIR default in example.env; `map`
-# writes to mapped/ beneath it). Local financial data — never published.
-/ofx_output/
+# Fetched and rewritten OFX files (OFX_OUTPUT_DIR; `map` writes to mapped/
+# beneath it). Local financial data — never published.
+ofx_output/
 
-# brokerferry's investments snapshots (INVESTMENTS_OUTPUT_DIR default). They hold
-# real account names, balances and holdings — never published.
-/investments_output/
+# brokerferry's investments snapshots (INVESTMENTS_OUTPUT_DIR, or wherever the
+# operator pointed it). The .pb is the contract, the .json is the readable
+# rendering of the same real holdings, the .part is one mid-write. None may
+# ever be published.
+investments_output/
+reports/
+investments_*.pb
+investments_*.json
+*.part
 *.pb
 
-# The two binaries' local databases and the extensionless brokerferry build.
-/[Bb]roker[Ff]erry.db*
-/brokerferry
-
-# Encrypted credential backups and exports — local only, never published.
+# Encrypted credential backups and exports, under every name plaid-export has
+# been given — local only, never published.
 *.encryptedBackup
+*.encrypted
 *.tapb
+access_token_backup*
 # ...except the golden backup fixture: it holds fabricated tokens and is
 # deliberately committed, so the format-regression test can read it.
 !plaid/testdata/*.tapb

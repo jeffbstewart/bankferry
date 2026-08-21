@@ -19,8 +19,9 @@ GnuCash book ──► learn ──► payee rules ┘
 It formerly used a prior aggregator's API, which was withdrawn in July 2026.
 
 The same module builds a second program, **brokerferry**, which pulls brokerage holdings
-and investment transactions under its own Plaid account and writes the investments
-snapshot that [finance2](../finance2) imports. See [brokerferry](#brokerferry).
+and investment transactions under its own credentials, Items and vault — from the same
+Plaid account — and writes the investments snapshot that [finance2](../finance2) imports.
+See [brokerferry](#brokerferry).
 
 ## Status
 
@@ -97,9 +98,8 @@ go run ./cmd/bankferry help
 ```
 
 `bankferry help` explains every command and what each one costs. The binary lives under
-`cmd/bankferry`; the module is laid out to build a second program, `brokerferry`, from the
-same packages with its own Plaid credentials, Items and security-key vault (see
-`cli.App`).
+`cmd/bankferry`; the module builds a second program, `brokerferry`, from the same packages
+with its own keyring namespace, Items and security-key vault (see `cli.App`).
 
 ## Configuration
 
@@ -214,7 +214,9 @@ intent, declared before the browser opens.
 
 No endpoint returns an access token given an `item_id`. Lose the token and the Item can
 never be removed and never be used — only abandoned. Re-linking creates a *duplicate* Item,
-and a Trial account is allowed ten for the lifetime of the account. Removing one does not
+and a Trial account is allowed ten for the lifetime of the account — **across both
+programs**, since bankferry and brokerferry link under the same Plaid account (see
+[brokerferry](#brokerferry)). Removing one does not
 return its slot.
 
 Hence `plaid-export`, `plaid-verify-backup`, and a nag on every run while the keyring holds
@@ -426,13 +428,26 @@ A new data provider is added by writing an adapter that populates `source.Accoun
 
 ## brokerferry
 
-`brokerferry` is a second binary built from the same packages. It exists so that brokerage
-accounts can be read under a **separate Plaid developer account**: its credentials, Items,
-security-key vault and database are all its own, and nothing in either program can reach
+`brokerferry` is a second binary built from the same packages. Its Items, security-key
+vault, keyring entries and database are all its own, and nothing in either program can reach
 the other's. Every `plaid-*` command works identically — `plaid-init`, `plaid-link`,
 `plaid-enroll-key`, `plaid-export` and the rest — against brokerferry's own keyring service
 and vault, and `plaid-link` requests the `investments` product instead of `transactions`, so
 Link offers only institutions that serve it.
+
+It was designed to allow a separate Plaid developer account, but Plaid does not make a
+second account practical, so **both programs run under one Plaid account** with the same
+client ID and secret stored twice — once per keyring service, and the production secret
+sealed in two vaults, one per program, each enrolled separately. Two consequences:
+
+- **The ten-Item lifetime cap is shared.** `plaid-items` in each program lists only its own
+  Items; nothing shows the combined count. Add bankferry's Items and brokerferry's together
+  before linking another.
+- **Rotating the production secret means re-enrolling both vaults** (`plaid-enroll-key` in
+  each program).
+
+The `--duplicate-of` guard is per program: linking the same institution in both binaries is
+two logins to Plaid and spends two slots.
 
 ```sh
 go run ./cmd/brokerferry plaid-init --env sandbox
