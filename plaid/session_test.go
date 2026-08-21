@@ -76,7 +76,7 @@ func TestNewLinkSession_GeneratesDistinctSecrets(t *testing.T) {
 // The cookie is only marked Secure when the browser will reach us over HTTPS,
 // because a Secure cookie is never sent over plain HTTP.
 func TestNewLinkSession_SecureCookieOnlyForHTTPS(t *testing.T) {
-	https, err := newLinkSession(LinkOptions{RedirectURI: "https://plaid.example.net/oauth-return"})
+	https, err := newLinkSession(LinkOptions{RedirectHost: "plaid.example.net"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,16 +204,16 @@ func TestLinkSession_ClaimSucceedsOnce(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLinkOptions_Origin(t *testing.T) {
-	cases := []struct{ uri, bind, want string }{
+	cases := []struct{ host, bind, want string }{
 		{"", "", "http://" + DefaultBindAddr},
 		{"", "localhost:9999", "http://localhost:9999"},
-		{"https://plaid.example.net/oauth-return", "", "https://plaid.example.net"},
-		{"https://plaid.example.net:8443/x", "0.0.0.0:8570", "https://plaid.example.net:8443"},
+		{"plaid.example.net", "", "https://plaid.example.net"},
+		{"plaid.example.net:8443", "0.0.0.0:8570", "https://plaid.example.net:8443"},
 	}
 	for _, tc := range cases {
-		opts := LinkOptions{RedirectURI: tc.uri, BindAddr: tc.bind}
+		opts := LinkOptions{RedirectHost: tc.host, BindAddr: tc.bind}
 		if got := opts.origin(); got != tc.want {
-			t.Errorf("origin(%q,%q) = %q, want %q", tc.uri, tc.bind, got, tc.want)
+			t.Errorf("origin(%q,%q) = %q, want %q", tc.host, tc.bind, got, tc.want)
 		}
 	}
 }
@@ -224,8 +224,8 @@ func TestLinkOptions_Origin(t *testing.T) {
 // proxied origin carrying no session at all.
 func TestLinkOptions_EntryURLFollowsTheRedirectURI(t *testing.T) {
 	opts := LinkOptions{
-		RedirectURI: "https://plaid.example.net/oauth-return",
-		BindAddr:    "0.0.0.0:8570",
+		RedirectHost: "plaid.example.net",
+		BindAddr:     "0.0.0.0:8570",
 	}
 
 	got := opts.EntryURL("abc123")
@@ -251,23 +251,20 @@ func TestLinkOptions_EntryURLFallsBackToTheBindAddress(t *testing.T) {
 
 // A non-default port on the redirect URI survives into the entry URL.
 func TestLinkOptions_EntryURLKeepsThePort(t *testing.T) {
-	opts := LinkOptions{RedirectURI: "https://plaid.example.net:8443/oauth-return"}
+	opts := LinkOptions{RedirectHost: "plaid.example.net:8443"}
 	if got := opts.EntryURL("k"); got != "https://plaid.example.net:8443/?key=k" {
 		t.Errorf("EntryURL = %q", got)
 	}
 }
 
-func TestLinkOptions_CallbackPath(t *testing.T) {
-	cases := []struct{ uri, want string }{
-		{"", defaultCallbackPath},
-		{"https://plaid.example.net/", defaultCallbackPath},
-		{"https://plaid.example.net/oauth-return", "/oauth-return"},
-		{"https://plaid.example.net/deep/cb", "/deep/cb"},
+// The redirect URI handed to Plaid is derived, never supplied: the host is
+// the only part the operator chooses.
+func TestLinkOptions_RedirectURIIsDerived(t *testing.T) {
+	if got := (LinkOptions{RedirectHost: "plaid.example.net:8443"}).redirectURI(); got != "https://plaid.example.net:8443/oauth-return" {
+		t.Errorf("redirectURI = %q", got)
 	}
-	for _, tc := range cases {
-		if got := (LinkOptions{RedirectURI: tc.uri}).callbackPath(); got != tc.want {
-			t.Errorf("callbackPath(%q) = %q, want %q", tc.uri, got, tc.want)
-		}
+	if got := (LinkOptions{}).redirectURI(); got != "" {
+		t.Errorf("redirectURI without a host = %q", got)
 	}
 }
 

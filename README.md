@@ -67,7 +67,9 @@ through Plaid's OAuth flow needs the browser to reach a callback URL Plaid has o
 over trusted HTTPS, and this tool was built for one specific setup:
 
 - **A registered HTTPS redirect URI.** Plaid rejects an unregistered one, and OAuth
-  institutions — Chase among them — will not complete without it.
+  institutions — Chase among them — will not complete without it. You give `plaid-link` only
+  the host (`--redirect-host myfoo.mydomain.com`, or `PLAID_REDIRECT_HOST`); the URI is always
+  `https://<host>/oauth-return`, and that exact string is what you register in the Dashboard.
 - **Dynamic DNS, a reverse proxy (HAProxy), and a wildcard TLS certificate.** The loopback
   link server is fronted by HAProxy under a name covered by a wildcard cert, so the browser
   reaches a trusted HTTPS origin that forwards to the local server. Plaid never fetches the
@@ -269,8 +271,10 @@ bank and have the browser POST to `/exchange`.
    and only for five minutes.
 4. **Single use** — the exchange can complete exactly once.
 
-It binds loopback unless told otherwise. The OAuth callback resumes Link with a
-`receivedRedirectUri` the *server* reconstructs, never one the caller supplies. `/healthz`
+It binds loopback unless told otherwise. The redirect URI is derived from `--redirect-host`
+— always `https://<host>/oauth-return`, no other scheme or path — so the server always serves
+the address Plaid was given. The OAuth callback resumes Link with a `receivedRedirectUri` the
+*server* reconstructs, never one the caller supplies. `/healthz`
 is the only unauthenticated endpoint. Plaid never fetches the redirect URI — only your
 browser does — so it need not face the internet.
 
