@@ -461,9 +461,10 @@ Configuration is loaded from a `.env` file in the project root via `godotenv`. S
 
 ## Version Control
 
-This repository uses **Subversion (svn)**, not git. When creating new files, always add them
-to svn tracking with `svn add <file>`. The `.env` file is svn-ignored and must never be
-committed.
+This repository is a **git** repository on GitHub (`jeffbstewart/bankferry`); changes land
+through pull requests against `main`, and CI (`.github/workflows/ci.yml`) runs gofmt, vet and
+the tests on Windows. Stage new files with `git add`. The `.env` file is git-ignored and
+must never be committed.
 
 ### Update the docs in the same commit
 
