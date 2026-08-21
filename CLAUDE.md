@@ -327,6 +327,20 @@ institution *and* item ID (`cli.itemLabel`). Neither name identifies anything on
 Chase calls every credit card "CREDIT", and two logins at one bank are two Items with the
 same institution name.
 
+### Investments numbers are carried verbatim
+`plaid/investments.go` (brokerferry's client for `/investments/holdings/get` and
+`/investments/transactions/get`) does **not** use `money.Amount`. `money` is USD-only and
+exists to sign and render OFX statements; the investments contract
+(`proto/plaid_snapshot.proto`) carries every quantity and amount as the exact decimal string
+Plaid sent, in whatever currency Plaid names. So the client decodes with `json.Number`,
+checks each literal against the one decimal grammar (`money.CheckLiteral`, factored out of
+`money.Parse`), and keeps the string — `plaid.DecimalAmount{Value, Currency}`. Unofficial
+currencies are refused; any ISO 4217 code is accepted. Absent optional values stay `nil`,
+never zero, because finance2 distinguishes "not reported" from "0".
+
+Pagination of `/investments/transactions/get` runs to Plaid's reported total, and a failure on
+any page discards the whole window: a partial window would look complete to the reader.
+
 ### Transaction type mapping
 `ofxexport.ofxTransactionType()` derives OFX `TRNTYPE` from the sign of the source amount:
 money out (positive) is `DEBIT`, money in (negative) is `CREDIT`, and it does not depend on

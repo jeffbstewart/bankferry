@@ -132,48 +132,9 @@ func Parse(s string, c Currency) (Amount, error) {
 	if c == "" {
 		return Amount{}, fmt.Errorf("%w: empty", ErrCurrency)
 	}
-	if s == "" {
-		return Amount{}, fmt.Errorf("%w: empty string", ErrInvalid)
-	}
-
-	i := 0
-	negative := false
-	switch s[0] {
-	case '+':
-		i++
-	case '-':
-		negative = true
-		i++
-	}
-
-	intPart, n := readDigits(s[i:])
-	i += n
-
-	var fracPart string
-	if i < len(s) && s[i] == '.' {
-		i++
-		var m int
-		fracPart, m = readDigits(s[i:])
-		i += m
-	}
-
-	if intPart == "" && fracPart == "" {
-		return Amount{}, fmt.Errorf("%w: %q has no digits", ErrInvalid, s)
-	}
-
-	exponent := 0
-	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
-		i++
-		var err error
-		exponent, err = readExponent(s[i:])
-		if err != nil {
-			return Amount{}, fmt.Errorf("%w: %q: %v", ErrInvalid, s, err)
-		}
-		i = len(s)
-	}
-
-	if i != len(s) {
-		return Amount{}, fmt.Errorf("%w: %q has trailing characters", ErrInvalid, s)
+	negative, intPart, fracPart, exponent, err := splitLiteral(s)
+	if err != nil {
+		return Amount{}, err
 	}
 
 	digits := intPart + fracPart
@@ -204,6 +165,63 @@ func Parse(s string, c Currency) (Amount, error) {
 		signed = -signed
 	}
 	return Amount{units: signed, scale: uint8(scale), currency: c}, nil
+}
+
+// CheckLiteral reports whether s is a decimal literal in the grammar Parse
+// accepts — optional sign, digits, optional fraction, optional exponent —
+// without binding it to a currency or a range. It is for values that must be
+// carried verbatim rather than computed with: a share quantity, or an amount
+// in a currency this package does not model. A string that passes here is
+// exactly what was received, and exactly what a decimal-aware reader will
+// parse.
+func CheckLiteral(s string) error {
+	_, _, _, _, err := splitLiteral(s)
+	return err
+}
+
+// splitLiteral is the grammar: [sign] digits [. digits] [e exponent].
+func splitLiteral(s string) (negative bool, intPart, fracPart string, exponent int, err error) {
+	if s == "" {
+		return false, "", "", 0, fmt.Errorf("%w: empty string", ErrInvalid)
+	}
+
+	i := 0
+	switch s[0] {
+	case '+':
+		i++
+	case '-':
+		negative = true
+		i++
+	}
+
+	var n int
+	intPart, n = readDigits(s[i:])
+	i += n
+
+	if i < len(s) && s[i] == '.' {
+		i++
+		var m int
+		fracPart, m = readDigits(s[i:])
+		i += m
+	}
+
+	if intPart == "" && fracPart == "" {
+		return false, "", "", 0, fmt.Errorf("%w: %q has no digits", ErrInvalid, s)
+	}
+
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		exponent, err = readExponent(s[i:])
+		if err != nil {
+			return false, "", "", 0, fmt.Errorf("%w: %q: %v", ErrInvalid, s, err)
+		}
+		i = len(s)
+	}
+
+	if i != len(s) {
+		return false, "", "", 0, fmt.Errorf("%w: %q has trailing characters", ErrInvalid, s)
+	}
+	return negative, intPart, fracPart, exponent, nil
 }
 
 func readDigits(s string) (string, int) {
