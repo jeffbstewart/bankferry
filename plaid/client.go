@@ -139,15 +139,15 @@ func apiError(op string, httpResp *http.Response, err error) error {
 // CreateLinkToken requests a short-lived link_token used to initialize
 // Link in the browser.
 //
-// redirectURI may be empty. It is required for OAuth institutions, which
+// redirectHost may be empty. It is required for OAuth institutions, which
 // includes Chase, and Plaid demands it be registered in the Dashboard under
 // Allowed redirect URIs and served over HTTPS. Only Sandbox permits an
 // http://localhost redirect.
-func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIdentity, redirectURI string) (string, error) {
+func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIdentity, redirectHost string) (string, error) {
 	if err := id.Validate(); err != nil {
 		return "", err
 	}
-	if err := ValidateRedirectURI(redirectURI); err != nil {
+	if err := ValidateRedirectHost(redirectHost); err != nil {
 		return "", err
 	}
 
@@ -160,8 +160,8 @@ func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIde
 	)
 	req.SetUser(*user)
 	req.SetProducts(id.sdkProducts())
-	if redirectURI != "" {
-		req.SetRedirectUri(redirectURI)
+	if redirectHost != "" {
+		req.SetRedirectUri(RedirectURI(redirectHost))
 	}
 
 	if id.requests(plaidsdk.PRODUCTS_TRANSACTIONS) {
@@ -191,11 +191,11 @@ func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIde
 // in update mode. The Item's access_token has not changed." Exchanging the
 // public_token here would be a mistake, and on production could cost one of
 // the ten Items allowed for the lifetime of the account.
-func CreateUpdateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIdentity, accessToken, redirectURI string) (string, error) {
+func CreateUpdateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIdentity, accessToken, redirectHost string) (string, error) {
 	if err := id.Validate(); err != nil {
 		return "", err
 	}
-	if err := ValidateRedirectURI(redirectURI); err != nil {
+	if err := ValidateRedirectHost(redirectHost); err != nil {
 		return "", err
 	}
 
@@ -208,8 +208,8 @@ func CreateUpdateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id L
 	)
 	req.SetUser(*user)
 	req.SetAccessToken(accessToken)
-	if redirectURI != "" {
-		req.SetRedirectUri(redirectURI)
+	if redirectHost != "" {
+		req.SetRedirectUri(RedirectURI(redirectHost))
 	}
 
 	resp, httpResp, err := client.PlaidApi.LinkTokenCreate(ctx).

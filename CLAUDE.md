@@ -117,10 +117,15 @@ served as `text/plain` with `nosniff`, so a reverse proxy can be verified before
 spent.
 
 The server binds loopback by default (`DefaultBindAddr`). `--bind` opts into a wider bind
-and warns. `--redirect-uri` must be HTTPS unless it is loopback, is validated before any
-Plaid call, and **must be registered in the Plaid Dashboard** — Plaid returns
-`INVALID_FIELD` otherwise. Plaid never fetches the redirect URI; only the user's browser
-does, so it need not face the internet.
+and warns. **The redirect URI is derived, never supplied.** The operator gives
+`--redirect-host <host[:port]>` (or `PLAID_REDIRECT_HOST`), and the URI handed to Plaid is
+always `https://<host>/oauth-return` (`plaid.RedirectURI`, `plaid.CallbackPath`): the scheme
+is fixed to HTTPS with no loopback exception, and the path is fixed so the server always
+serves what Plaid was told. `ValidateRedirectHost` refuses anything with a scheme or path,
+before any Plaid call. That exact URI **must be registered in the Plaid Dashboard** — Plaid
+returns `INVALID_FIELD` otherwise. A reverse proxy must forward the whole host, not one
+path. Plaid never fetches the redirect URI; only the user's browser does, so it need not
+face the internet.
 
 The OAuth callback resumes Link with a `receivedRedirectUri` the **server reconstructs**
 from the configured redirect URI, never one the caller supplies.

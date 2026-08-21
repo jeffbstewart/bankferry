@@ -5,106 +5,73 @@ import (
 	"testing"
 )
 
-// An OAuth institution returns the user to the redirect URI carrying the
-// oauth_state_id that completes the Link session. Over plain HTTP that
-// crosses the network in the clear.
-func TestValidateRedirectURI_HTTPSAccepted(t *testing.T) {
-	for _, uri := range []string{
-		"https://plaid.example.net/oauth-return",
-		"https://plaid.example.net/",
+func TestValidateRedirectHost_Accepted(t *testing.T) {
+	for _, host := range []string{
+		"plaid.example.net",
+		"plaid.example.net:8443",
+		"PLAID.EXAMPLE.NET",
+		"myfoo.mydomain.com",
+		"192.0.2.10",
+		"192.0.2.10:443",
+		"[2001:db8::1]:8443",
+	} {
+		if err := ValidateRedirectHost(host); err != nil {
+			t.Errorf("ValidateRedirectHost(%q) = %v, want nil", host, err)
+		}
+	}
+}
+
+func TestValidateRedirectHost_EmptyIsValid(t *testing.T) {
+	if err := ValidateRedirectHost(""); err != nil {
+		t.Errorf("empty host rejected: %v", err)
+	}
+	if RedirectURI("") != "" {
+		t.Error("an empty host produced a redirect URI")
+	}
+}
+
+// The flag takes a host, not a URI. Anything that looks like the old full
+// form — a scheme, a path, the callback itself — is refused with a message
+// that says what the URI will be, so the operator registers the right thing.
+func TestValidateRedirectHost_RefusesURIs(t *testing.T) {
+	for _, host := range []string{
 		"https://plaid.example.net",
-		"HTTPS://PLAID.EXAMPLE.NET/oauth-return",
-		"https://plaid.example.net:8443/oauth-return",
-	} {
-		if err := ValidateRedirectURI(uri); err != nil {
-			t.Errorf("ValidateRedirectURI(%q) = %v, want nil", uri, err)
-		}
-	}
-}
-
-// Loopback over plain HTTP never leaves the machine, and Plaid permits it in
-// Sandbox.
-func TestValidateRedirectURI_HTTPLoopbackAccepted(t *testing.T) {
-	for _, uri := range []string{
-		"http://localhost:8570/oauth-return",
-		"http://LOCALHOST:8570/",
-		"http://127.0.0.1:8570/oauth-return",
-		"http://[::1]:8570/oauth-return",
-	} {
-		if err := ValidateRedirectURI(uri); err != nil {
-			t.Errorf("ValidateRedirectURI(%q) = %v, want nil", uri, err)
-		}
-	}
-}
-
-// The rule that matters: plain HTTP to anywhere but this machine.
-func TestValidateRedirectURI_HTTPNonLoopbackRefused(t *testing.T) {
-	for _, uri := range []string{
-		"http://plaid.example.net/oauth-return",
-		"http://192.168.1.10:8570/oauth-return",
-		"http://10.0.0.5/",
-		"http://example.com",
-	} {
-		err := ValidateRedirectURI(uri)
-		if !errors.Is(err, ErrRedirectURI) {
-			t.Errorf("ValidateRedirectURI(%q) = %v, want ErrRedirectURI", uri, err)
-		}
-	}
-}
-
-// A private address is still not this machine. Encrypt it.
-func TestValidateRedirectURI_PrivateNetworkIsNotLoopback(t *testing.T) {
-	if err := ValidateRedirectURI("http://192.168.1.10/oauth-return"); err == nil {
-		t.Error("a LAN address is not loopback and must require https")
-	}
-}
-
-func TestValidateRedirectURI_EmptyIsValid(t *testing.T) {
-	if err := ValidateRedirectURI(""); err != nil {
-		t.Errorf("an empty redirect URI is valid: %v", err)
-	}
-}
-
-func TestValidateRedirectURI_Malformed(t *testing.T) {
-	for _, uri := range []string{
-		"not a url",
-		"https://",
-		"/oauth-return",
-		"ftp://plaid.example.net/",
+		"https://plaid.example.net/oauth-return",
+		"http://localhost:8570",
 		"plaid.example.net/oauth-return",
+		"plaid.example.net/",
+		"plaid.example.net?x=1",
+		"plaid.example.net#frag",
+		"user@plaid.example.net",
+		"plaid.example.net:abc",
+		"plaid.example.net:0",
+		"plaid.example.net:70000",
+		":8443",
+		"plaid example.net",
 	} {
-		if err := ValidateRedirectURI(uri); !errors.Is(err, ErrRedirectURI) {
-			t.Errorf("ValidateRedirectURI(%q) = %v, want ErrRedirectURI", uri, err)
+		err := ValidateRedirectHost(host)
+		if !errors.Is(err, ErrRedirectHost) {
+			t.Errorf("ValidateRedirectHost(%q) = %v, want ErrRedirectHost", host, err)
 		}
 	}
 }
 
-// Plaid matches the registered redirect URI exactly; a fragment never
-// reaches the server anyway.
-func TestValidateRedirectURI_FragmentRefused(t *testing.T) {
-	if err := ValidateRedirectURI("https://plaid.example.net/oauth#frag"); !errors.Is(err, ErrRedirectURI) {
-		t.Error("a fragment must be refused")
+// Loopback over plain HTTP is gone: the scheme is not the operator's to
+// choose, so there is nothing to make an exception for.
+func TestValidateRedirectHost_NoPlainHTTPLoopback(t *testing.T) {
+	if err := ValidateRedirectHost("http://localhost:8570"); !errors.Is(err, ErrRedirectHost) {
+		t.Errorf("got %v", err)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// redirectPath
-// ---------------------------------------------------------------------------
-
-// The link server must answer the path the institution sends the user back
-// to. A bare host or a root path is already served by "/".
-func TestRedirectPath(t *testing.T) {
-	cases := []struct{ uri, want string }{
-		{"", ""},
-		{"https://plaid.example.net/oauth-return", "/oauth-return"},
-		{"https://plaid.example.net/deep/path", "/deep/path"},
-		{"https://plaid.example.net/", ""},
-		{"https://plaid.example.net", ""},
-		{"http://localhost:8570/oauth-return", "/oauth-return"},
+func TestRedirectURI_IsAlwaysHTTPSAtTheCallbackPath(t *testing.T) {
+	cases := map[string]string{
+		"plaid.example.net":      "https://plaid.example.net/oauth-return",
+		"plaid.example.net:8443": "https://plaid.example.net:8443/oauth-return",
 	}
-	for _, tc := range cases {
-		if got := redirectPath(tc.uri); got != tc.want {
-			t.Errorf("redirectPath(%q) = %q, want %q", tc.uri, got, tc.want)
+	for host, want := range cases {
+		if got := RedirectURI(host); got != want {
+			t.Errorf("RedirectURI(%q) = %q, want %q", host, got, want)
 		}
 	}
 }

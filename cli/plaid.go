@@ -19,14 +19,14 @@ import (
 	"github.com/jeffbstewart/bankferry/plaid"
 )
 
-// linkOptions resolves the redirect URI and bind address, falling back to
-// PLAID_REDIRECT_URI and PLAID_BIND_ADDR when the flags are empty. The
-// redirect URI is validated here so a bad value fails before any Plaid call.
-func linkOptions(uri, bind string) plaid.LinkOptions {
-	if uri == "" {
-		uri = os.Getenv("PLAID_REDIRECT_URI")
+// linkOptions resolves the redirect host and bind address, falling back to
+// PLAID_REDIRECT_HOST and PLAID_BIND_ADDR when the flags are empty. The
+// redirect host is validated here so a bad value fails before any Plaid call.
+func linkOptions(host, bind string) plaid.LinkOptions {
+	if host == "" {
+		host = os.Getenv("PLAID_REDIRECT_HOST")
 	}
-	if err := plaid.ValidateRedirectURI(uri); err != nil {
+	if err := plaid.ValidateRedirectHost(host); err != nil {
 		stderr("Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -40,14 +40,14 @@ func linkOptions(uri, bind string) plaid.LinkOptions {
 		stderr("      URI; only your browser does, so it need not face the internet.\n\n")
 	}
 
-	return plaid.LinkOptions{Identity: app.Link, RedirectURI: uri, BindAddr: bind}
+	return plaid.LinkOptions{Identity: app.Link, RedirectHost: host, BindAddr: bind}
 }
 
 // redirectAndBindFlags registers the flags linkOptions consumes.
-func redirectAndBindFlags(fs *flag.FlagSet) (uri, bind *string) {
-	uri = fs.String("redirect-uri", "", "HTTPS redirect URI, or PLAID_REDIRECT_URI")
+func redirectAndBindFlags(fs *flag.FlagSet) (host, bind *string) {
+	host = fs.String("redirect-host", "", "host[:port] OAuth banks return to over HTTPS, or PLAID_REDIRECT_HOST")
 	bind = fs.String("bind", "", "server bind address, or PLAID_BIND_ADDR")
-	return uri, bind
+	return host, bind
 }
 
 func isLoopbackAddr(addr string) bool {
@@ -153,18 +153,19 @@ func confirmProductionLink(env plaid.Environment, duplicateOf string, items []pl
 func runPlaidLink(args []string) {
 	fs := newFlags("plaid-link")
 	envStr := envFlag(fs)
-	uri, bind := redirectAndBindFlags(fs)
+	host, bind := redirectAndBindFlags(fs)
 	dupOf := fs.String("duplicate-of", "",
 		"item ID of an existing Item at the same institution, to link a second login beside it")
 	parseFlags(fs, args)
 
 	env := requireEnv(*envStr)
-	opts := linkOptions(*uri, *bind)
+	opts := linkOptions(*host, *bind)
 
-	if env == plaid.Production && opts.RedirectURI == "" {
-		stderr("Warning: no --redirect-uri and no PLAID_REDIRECT_URI.\n")
+	if env == plaid.Production && opts.RedirectHost == "" {
+		stderr("Warning: no --redirect-host and no PLAID_REDIRECT_HOST.\n")
 		stderr("         OAuth institutions, which include Chase, will not complete.\n")
-		stderr("         The URI must be HTTPS and registered in the Plaid Dashboard\n")
+		stderr("         Give the HTTPS host that reaches this server; the redirect URI\n")
+		stderr("         https://<host>%s must be registered in the Plaid Dashboard\n", plaid.CallbackPath)
 		stderr("         under Allowed redirect URIs.\n\n")
 	}
 
@@ -618,12 +619,12 @@ func selectItem(env plaid.Environment, wanted string) plaid.Item {
 func runPlaidRelink(args []string) {
 	fs := newFlags("plaid-relink")
 	envStr := envFlag(fs)
-	uri, bind := redirectAndBindFlags(fs)
+	host, bind := redirectAndBindFlags(fs)
 	itemID := fs.String("item", "", "item ID to re-authenticate; optional when one is linked")
 	parseFlags(fs, args)
 
 	env := requireEnv(*envStr)
-	opts := linkOptions(*uri, *bind)
+	opts := linkOptions(*host, *bind)
 	item := selectItem(env, *itemID)
 
 	// Decrypted once. Both clients, and the server's own item check, are

@@ -14,7 +14,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -35,10 +34,6 @@ const DefaultBindAddr = "localhost:8570"
 
 // LinkServerAddr is retained for callers and tests that assume the default.
 const LinkServerAddr = DefaultBindAddr
-
-// defaultCallbackPath is where an OAuth institution returns the user when the
-// configured redirect URI names no path of its own.
-const defaultCallbackPath = "/oauth-return"
 
 // oauthWindow bounds how long the server will wait for a bank to send the
 // user back. Outside it, a callback is refused and the server stops. A link
@@ -63,10 +58,10 @@ type LinkOptions struct {
 	// is created with. Required.
 	Identity LinkIdentity
 
-	// RedirectURI is where OAuth institutions return the user. Required for
-	// Chase. Must be HTTPS outside Sandbox, and registered in the Plaid
-	// Dashboard.
-	RedirectURI string
+	// RedirectHost is the host (or host:port) OAuth institutions return the
+	// user to, always over HTTPS at CallbackPath; see RedirectURI. Required
+	// for Chase. The resulting URI must be registered in the Plaid Dashboard.
+	RedirectHost string
 
 	// BindAddr defaults to DefaultBindAddr.
 	BindAddr string
@@ -107,20 +102,14 @@ func (o LinkOptions) bindAddr() string {
 // when one is configured, since that is where the browser must be for the
 // OAuth callback to land on the same site, and the bind address otherwise.
 func (o LinkOptions) origin() string {
-	if o.RedirectURI != "" {
-		if u, err := url.Parse(o.RedirectURI); err == nil && u.Host != "" {
-			return u.Scheme + "://" + u.Host
-		}
+	if o.RedirectHost != "" {
+		return "https://" + o.RedirectHost
 	}
 	return "http://" + o.bindAddr()
 }
 
-func (o LinkOptions) callbackPath() string {
-	if path := redirectPath(o.RedirectURI); path != "" {
-		return path
-	}
-	return defaultCallbackPath
-}
+// redirectURI is the full redirect URI handed to Plaid, or empty.
+func (o LinkOptions) redirectURI() string { return RedirectURI(o.RedirectHost) }
 
 // EntryURL is the address the operator must open, carrying the run's access
 // key.
@@ -377,7 +366,7 @@ func (s *linkSession) guard(name string, next http.HandlerFunc) http.HandlerFunc
 // StartLinkServer serves the Plaid Link page, waits for the user to complete a
 // Link session in the browser, persists the resulting Item, and returns.
 func StartLinkServer(ctx context.Context, env Environment, client *plaidsdk.APIClient, opts LinkOptions) (LinkResult, error) {
-	linkToken, err := CreateLinkToken(ctx, client, opts.Identity, opts.RedirectURI)
+	linkToken, err := CreateLinkToken(ctx, client, opts.Identity, opts.RedirectHost)
 	if err != nil {
 		return LinkResult{}, err
 	}
@@ -412,7 +401,7 @@ func StartLinkServer(ctx context.Context, env Environment, client *plaidsdk.APIC
 // of an OAuth callback — raising a security-key touch at a moment the
 // operator cannot connect to any decision they made.
 func StartRelinkServer(ctx context.Context, env Environment, client *plaidsdk.APIClient, dataClient *DataClient, item Item, opts LinkOptions) error {
-	linkToken, err := CreateUpdateLinkToken(ctx, client, opts.Identity, item.AccessToken, opts.RedirectURI)
+	linkToken, err := CreateUpdateLinkToken(ctx, client, opts.Identity, item.AccessToken, opts.RedirectHost)
 	if err != nil {
 		return err
 	}
@@ -505,8 +494,7 @@ func serveLink(ctx context.Context, env Environment, data linkPageData, opts Lin
 	}))
 
 	// The OAuth return.
-	callbackPath := opts.callbackPath()
-	mux.HandleFunc(callbackPath, session.guard("an OAuth callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(CallbackPath, session.guard("an OAuth callback", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("oauth_state_id") == "" {
 			http.Error(w, "Not an OAuth return.", http.StatusBadRequest)
 			return
@@ -556,8 +544,8 @@ func serveLink(ctx context.Context, env Environment, data linkPageData, opts Lin
 	log.Printf("plaid: open this address in a browser to %s:", action)
 	log.Printf("plaid:   %s", opts.EntryURL(session.accessKey))
 	log.Printf("plaid: the key is good for this run only. Health: %s/healthz", opts.origin())
-	if opts.RedirectURI != "" {
-		log.Printf("plaid: OAuth institutions return to %s", opts.RedirectURI)
+	if opts.RedirectHost != "" {
+		log.Printf("plaid: OAuth institutions return to %s (register exactly that in the Plaid Dashboard)", opts.redirectURI())
 		log.Printf("plaid: open the address above, not %s, or the callback will "+
 			"arrive without a session", "http://"+opts.bindAddr())
 	}
