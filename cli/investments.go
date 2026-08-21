@@ -46,8 +46,6 @@ func runInvestments(args []string) {
 		stderr("Set it in .env to the directory for snapshot files.\n")
 		os.Exit(1)
 	}
-	dryRun := os.Getenv("DRY_RUN") != "false"
-
 	items, broken, err := plaid.LoadItems(env)
 	if err != nil {
 		stderr("Error reading stored items: %v\n", err)
@@ -102,27 +100,27 @@ func runInvestments(args []string) {
 		os.Exit(1)
 	}
 
-	if dryRun {
-		stdout("Dry run: snapshot covers %d institution(s). No file written.\n", len(fetched))
-		stdout("Set DRY_RUN=false in .env to write it.\n")
-	} else {
-		writer := snapshot.Writer{
-			Dir:        outputDir,
-			JSON:       *jsonFlag,
-			CreateFile: createExclusive,
-			Exists:     pathExists,
-		}
-		res, err := writer.Write(snap, time.Now())
-		if err != nil {
-			stderr("Error: %v\n", err)
-			os.Exit(1)
-		}
-		stdout("Wrote %s\n", res.Binary)
-		if res.JSON != "" {
-			stdout("Wrote %s (readable rendering; finance2 imports the .pb)\n", res.JSON)
-		}
-		stdout("Upload it through finance2's Imports screen.\n")
+	// No DRY_RUN here, unlike fetch. fetch's dry run guards an irreversible
+	// side effect: a real run advances a cursor Plaid never rewinds. This
+	// verb's only side effect is a new file in a directory the operator
+	// owns, a dry run would cost the same touch and the same calls, and the
+	// shared .env would couple the switch to bankferry's cursor.
+	writer := snapshot.Writer{
+		Dir:        outputDir,
+		JSON:       *jsonFlag,
+		CreateFile: createExclusive,
+		Exists:     pathExists,
 	}
+	res, err := writer.Write(snap, time.Now())
+	if err != nil {
+		stderr("Error: %v\n", err)
+		os.Exit(1)
+	}
+	stdout("Wrote %s\n", res.Binary)
+	if res.JSON != "" {
+		stdout("Wrote %s (readable rendering; finance2 imports the .pb)\n", res.JSON)
+	}
+	stdout("Upload it through finance2's Imports screen.\n")
 
 	if skipped > 0 {
 		stdout("%d institution(s) skipped; see above.\n", skipped)

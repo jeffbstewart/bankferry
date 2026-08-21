@@ -449,7 +449,9 @@ writes it with `snapshot.Writer`. **It records nothing between runs** — no cur
 database write, no "exported" table — because holdings are levels, not deltas: Plaid serves
 the full current state on every call, so nothing can be lost by a crash and nothing needs
 deduplicating. Do not add bookkeeping here; if something wants to remember the last run, it
-belongs in finance2, which archives every upload.
+belongs in finance2, which archives every upload. For the same reason it ignores `DRY_RUN`:
+`fetch`'s dry run guards the cursor, a dry run here would cost the same touch and calls for a
+file the operator can delete, and the shared `.env` would tie the switch to bankferry's.
 
 What does carry over from `fetch` is the file discipline, for the same reason: the final name
 is checked before anything is written, bytes go to `{final}.part` created with `O_EXCL`, and

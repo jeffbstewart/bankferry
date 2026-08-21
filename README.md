@@ -110,7 +110,7 @@ cp example.env .env
 | `OFX_OUTPUT_DIR` | Yes | — | Directory holding `.ofx` files; `map` writes to `mapped/` beneath it |
 | `DATABASE_PATH` | No | `bankferry.db` | Path to the SQLite database |
 | `GNUCASH_FILE` | Yes (for `learn`) | — | Path to your GnuCash file |
-| `DRY_RUN` | No | `true` | `fetch` / `investments` report what they would write, and write nothing |
+| `DRY_RUN` | No | `true` | `fetch` reports what it would write, and writes nothing; `investments` ignores it |
 | `INVESTMENTS_OUTPUT_DIR` | Yes (brokerferry) | — | Directory `brokerferry investments` writes snapshots into |
 
 `.env` must **never** be committed. It is version-control-ignored.
@@ -442,7 +442,8 @@ go run ./cmd/brokerferry investments --env sandbox --json
 you upload through finance2's Imports screen. `--json` writes a readable rendering beside
 it. There is no cursor and no database bookkeeping: holdings are levels, each snapshot is
 the full state, and a re-run writes another file. A snapshot is never written over an
-existing one. Every number in it is the exact decimal string Plaid sent; nothing passes
+existing one. `DRY_RUN` does not apply: `fetch`'s dry run protects a cursor Plaid never
+rewinds, and `investments` has nothing irreversible to protect. Every number in it is the exact decimal string Plaid sent; nothing passes
 through a float.
 
 Production costs one security-key touch per run, exactly like `fetch`. An Item whose

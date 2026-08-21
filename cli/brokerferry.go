@@ -40,9 +40,9 @@ func brokerferryUsage() {
 	stderr("        and write one snapshot file into INVESTMENTS_OUTPUT_DIR for upload\n")
 	stderr("        through finance2's Imports screen. Every number is the exact decimal\n")
 	stderr("        Plaid sent. Nothing is recorded between runs: each snapshot is the\n")
-	stderr("        full state, and a re-run simply writes another. DRY_RUN=false in .env\n")
-	stderr("        enables writing. --json also writes a readable rendering beside the\n")
-	stderr("        binary file; finance2 imports only the binary.\n")
+	stderr("        full state, and a re-run simply writes another. --json also writes a\n")
+	stderr("        readable rendering beside the binary file; finance2 imports only the\n")
+	stderr("        binary. DRY_RUN does not apply: there is no cursor to protect.\n")
 	stderr("        An institution that cannot serve the product is reported and skipped;\n")
 	stderr("        the snapshot still covers the rest.\n\n")
 }
@@ -50,7 +50,6 @@ func brokerferryUsage() {
 func brokerferryEnvUsage() {
 	stderr("  INVESTMENTS_OUTPUT_DIR  where snapshots are written\n")
 	stderr("  DATABASE_PATH           SQLite database, default brokerferry.db\n")
-	stderr("  DRY_RUN                 investments writes nothing unless this is exactly \"false\"\n")
 }
 
 func brokerferryFirstRunUsage() {
