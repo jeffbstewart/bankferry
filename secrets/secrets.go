@@ -12,7 +12,33 @@ import (
 	"github.com/99designs/keyring"
 )
 
-const serviceName = "bankferry"
+// serviceName is the OS-keyring service every key is stored under. It is
+// the namespace that keeps two programs built from this module — bankferry
+// and brokerferry — from seeing each other's Items: wincred prefixes every
+// credential name with it, Keychain and Secret Service match on it.
+//
+// It is empty until the composition root calls SetServiceName, and an empty
+// name is refused rather than defaulted. A binary that forgot to install its
+// identity must fail loudly, not quietly read and write another program's
+// access tokens.
+var serviceName string
+
+// ErrNoService reports that SetServiceName has not been called.
+var ErrNoService = errors.New("secrets: keyring service name not configured")
+
+// SetServiceName installs the keyring service name for this process. It is
+// called once, by main, before any key is touched. Installing a different
+// name after the first is a programming error and panics: a process has one
+// identity.
+func SetServiceName(name string) {
+	if name == "" {
+		panic("secrets: empty service name")
+	}
+	if serviceName != "" && serviceName != name {
+		panic("secrets: service name already set to " + serviceName)
+	}
+	serviceName = name
+}
 
 // ErrNotFound is returned by Load when the key is absent from the
 // keyring, so callers can tell "nothing stored yet" from a real failure.
@@ -31,6 +57,9 @@ type Keyring interface {
 var openKeyringFunc = openKeyring
 
 func openKeyring() (Keyring, error) {
+	if serviceName == "" {
+		return nil, ErrNoService
+	}
 	var backends []keyring.BackendType
 	switch runtime.GOOS {
 	case "darwin":

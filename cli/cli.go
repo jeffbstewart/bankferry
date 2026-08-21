@@ -1,5 +1,6 @@
-// Package cli implements the bankferry command-line interface,
-// dispatching subcommands for payee learning and OFX transformation.
+// Package cli implements the command-line interface shared by the programs
+// built from this module: the Plaid lifecycle commands, plus each program's
+// own verbs, selected by the App main installs.
 package cli
 
 import (
@@ -8,6 +9,7 @@ import (
 	"os"
 
 	"github.com/jeffbstewart/bankferry/plaid"
+	"github.com/jeffbstewart/bankferry/secrets"
 )
 
 // newFlags builds the flag set for one subcommand. Unlike the old hand-rolled
@@ -76,7 +78,7 @@ func plaidCredentials(env plaid.Environment) plaid.Credentials {
 	if env == plaid.Production {
 		store, closeDB := openDB()
 		defer closeDB()
-		return decryptOrExit(env, plaid.HardwareDecrypter{Store: store})
+		return decryptOrExit(env, plaid.HardwareDecrypter{Store: store, RP: app.RelyingParty})
 	}
 	return decryptOrExit(env, plaid.KeyringDecrypter{})
 }
@@ -90,9 +92,20 @@ func decryptOrExit(env plaid.Environment, dec plaid.APIKeyDecrypter) plaid.Crede
 	return creds
 }
 
-// Run parses command-line arguments and dispatches the appropriate
-// subcommand. Pass os.Args as the args parameter.
-func Run(args []string) {
+// Run installs the program's identity, parses command-line arguments and
+// dispatches the appropriate subcommand. Pass os.Args as the args parameter.
+//
+// The Plaid lifecycle commands are shared by every program built from this
+// module; what differs between them is the identity and the commands in
+// App.Commands.
+func Run(a App, args []string) {
+	if err := a.validate(); err != nil {
+		stderr("Error: %v\n", err)
+		os.Exit(1)
+	}
+	app = a
+	secrets.SetServiceName(a.KeyringService)
+
 	cmd := "help"
 	if len(args) >= 2 {
 		cmd = args[1]
@@ -127,21 +140,21 @@ func Run(args []string) {
 		runPlaidExport(args)
 	case "plaid-verify-backup":
 		runPlaidVerifyBackup(args)
-	case "fetch":
-		runFetch(args)
-	case "learn":
-		runLearn(args)
-	case "map":
-		runMap(args)
 	default:
+		for _, c := range app.Commands {
+			if c.Name == cmd {
+				c.Run(args)
+				return
+			}
+		}
 		usage()
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	stderr("bankferry — pull bank transactions and prepare them for GnuCash\n\n")
-	stderr("Usage: bankferry <command> [flags]\n\n")
+	stderr("%s — %s\n\n", prog(), app.Tagline)
+	stderr("Usage: %s <command> [flags]\n\n", prog())
 
 	stderr("Plaid setup\n")
 	stderr("  plaid-init --env sandbox\n")
@@ -256,49 +269,15 @@ func usage() {
 	stderr("        the keyring today. Flags any item that exists only in the keyring and\n")
 	stderr("        would therefore be lost. Restores nothing.\n\n")
 
-	stderr("Fetching\n")
-	stderr("  fetch --env <env> [--days <n>]\n")
-	stderr("        Sync each linked institution and write one .ofx file per bank or\n")
-	stderr("        credit card account into OFX_OUTPUT_DIR/unmapped/. Investment and loan\n")
-	stderr("        accounts are skipped. Pending transactions are never exported. Files\n")
-	stderr("        are written before the sync cursor advances, so an interrupted run\n")
-	stderr("        simply repeats itself. DRY_RUN=false in .env enables writing.\n")
-	stderr("        --days emits only transactions within the last n days. It bounds\n")
-	stderr("        output, not the sync: in a real run the cursor still advances past\n")
-	stderr("        the held-back older transactions, so they are not re-delivered.\n\n")
-
-	stderr("GnuCash\n")
-	stderr("  learn --gnucash <path>\n")
-	stderr("        Read a GnuCash file and extract every distinct transaction description\n")
-	stderr("        as a payee. Never writes to the file. Idempotent; re-run as it grows.\n")
-	stderr("        Falls back to GNUCASH_FILE.\n\n")
-
-	stderr("  learn --reset --gnucash <path>\n")
-	stderr("        Purge every payee and rule, then re-learn. The clean-slate rebuild for\n")
-	stderr("        the payee model; auto-learned rules regenerate, hand-made ones do not.\n\n")
-
-	stderr("  map\n")
-	stderr("        Rewrite the .ofx files in OFX_OUTPUT_DIR/unmapped/ using the learned\n")
-	stderr("        payee names, prompting for anything unmatched (raw and merchant names\n")
-	stderr("        shown side by side). Output goes to mapped/; import from there, never\n")
-	stderr("        from unmapped/.\n\n")
+	app.Usage()
 
 	stderr("  help\n")
 	stderr("        Show this text.\n\n")
 
 	stderr("Environment (.env)\n")
-	stderr("  OFX_OUTPUT_DIR       fetch writes to unmapped/ beneath it; map writes mapped/\n")
-	stderr("  DATABASE_PATH        SQLite database, default bankferry.db\n")
-	stderr("  DRY_RUN              fetch writes nothing unless this is exactly \"false\"\n")
-	stderr("  GNUCASH_FILE         Default for learn --gnucash\n")
+	app.EnvUsage()
 	stderr("  PLAID_REDIRECT_URI   Default for --redirect-uri (note: URI, not URL)\n")
 	stderr("  PLAID_BIND_ADDR      Default for --bind\n\n")
 
-	stderr("Typical first run\n")
-	stderr("  bankferry plaid-init --env sandbox\n")
-	stderr("  bankferry plaid-link --env sandbox\n")
-	stderr("  bankferry plaid-items --env sandbox\n")
-	stderr("  bankferry learn --gnucash /path/to/finances.gnucash\n")
-	stderr("  bankferry fetch --env sandbox\n")
-	stderr("  bankferry map\n")
+	app.FirstRunUsage()
 }

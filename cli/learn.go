@@ -20,15 +20,12 @@ func runLearn(args []string) {
 	}
 	if gnucashPath == "" {
 		stderr("Error: GnuCash file path required.\n")
-		stderr("Usage: bankferry learn --gnucash /path/to/file.gnucash\n")
+		stderr("Usage: %s learn --gnucash /path/to/file.gnucash\n", prog())
 		stderr("Or set GNUCASH_FILE in .env\n")
 		os.Exit(1)
 	}
 
-	dbPath := os.Getenv("DATABASE_PATH")
-	if dbPath == "" {
-		dbPath = "bankferry.db"
-	}
+	dbPath := databasePath()
 
 	store, err := db.Open(dbPath)
 	if err != nil {

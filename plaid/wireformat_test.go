@@ -102,7 +102,7 @@ and /sandbox/item/reset_login puts it there on demand. Repair it in a
 browser with Link update mode; the access token does not change and no Item
 is consumed:
 
-    go run . plaid-relink --env sandbox --item %s
+    go run ./cmd/bankferry plaid-relink --env sandbox --item %s
 
 Then re-run the tests.`, item.ItemID, item.InstitutionName, code, item.ItemID)
 }

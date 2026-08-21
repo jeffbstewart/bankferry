@@ -259,13 +259,13 @@ func TestDatedBackupPath_DiffersFromPrevious(t *testing.T) {
 
 func TestBackupWarning_SuggestedCommand(t *testing.T) {
 	w := BackupWarning{Environment: Sandbox, PreviousPath: filepath.Join("/b", "plaid.tapb")}
-	got := w.SuggestedCommand()
-	if got == "" || !containsAll(got, "plaid-export", "--env sandbox", "--out") {
+	got := w.SuggestedCommand("bankferry")
+	if got == "" || !containsAll(got, "bankferry plaid-export", "--env sandbox", "--out") {
 		t.Errorf("command = %q", got)
 	}
 
 	none := BackupWarning{Environment: Sandbox}
-	if none.SuggestedCommand() == "" {
+	if none.SuggestedCommand("bankferry") == "" {
 		t.Error("a warning without a previous path still names the command")
 	}
 }

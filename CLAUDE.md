@@ -6,8 +6,8 @@ this repository.
 ## Build and Test Commands
 
 ```bash
-go build ./...           # Build
-go run . help            # Run (defaults to "help" subcommand)
+go build ./...                 # Build
+go run ./cmd/bankferry help    # Run (defaults to "help" subcommand)
 go test ./...            # Run all tests
 go test -run TestName    # Run a single test
 ```
@@ -43,9 +43,10 @@ its docs, not this file, for how any of that works, and fix bugs in it there —
 `securitykey` package and the crypto in `plaid/hardwarekey.go` are gone, not moved aside.
 
 What stays here, in `plaid/hardwarekey.go`, is the glue that is genuinely Plaid's: one
-vault per environment, the RP identity (`bankferry.invalid` — changing it orphans
-every enrolled credential), the two-slot policy, and the routing that sends sandbox to the
-keyring and production to the key. Two invariants of that glue are load-bearing:
+vault per environment, the RP identity (a `plaid.RelyingParty` the program supplies —
+bankferry's is `bankferry.invalid`, and changing it orphans every enrolled credential), the
+two-slot policy, and the routing that sends sandbox to the keyring and production to the
+key. Two invariants of that glue are load-bearing:
 
 - **The environment is part of the secret's name** (`plaid-<env>-api-key`). touchvault binds
   a secret's name into its AAD, so a sandbox vault moved into production's row cannot yield
@@ -124,13 +125,51 @@ does, so it need not face the internet.
 The OAuth callback resumes Link with a `receivedRedirectUri` the **server reconstructs**
 from the configured redirect URI, never one the caller supplies.
 
+## Two programs, one module
+
+The module builds two binaries from the same packages: `bankferry` (bank and credit card
+transactions → OFX → GnuCash) and `brokerferry` (brokerage holdings → investments snapshot
+→ finance2). They are separate programs rather than modes of one **so that their Plaid
+state is separate by construction**: each has its own Plaid developer account and
+credentials, its own Items, its own security-key vault, and its own database, and no flag
+can point one at the other's.
+
+`cli.App` is the identity, installed once by `main` through `cli.Run(app, os.Args)`:
+
+- **`KeyringService`** is the OS-keyring service name. It is the namespace — wincred
+  prefixes every credential with it, Keychain and Secret Service match on it — so both
+  programs use the same key names (`plaid-item-<env>-<id>`, `plaid-secret-<env>`) without
+  collision. `secrets` refuses to open the keyring until `SetServiceName` has been called
+  (`ErrNoService`), and panics if a second, different name is installed: a binary that
+  forgot its identity must fail, never default to reading another program's tokens.
+- **`RelyingParty`** is the WebAuthn identity of the program's vault. Changing a program's
+  RP ID orphans every credential it enrolled.
+- **`Link`** (`plaid.LinkIdentity`) is the client name Plaid shows and the products an Item
+  is created with. Plaid shows only institutions that support every requested product and
+  fixes the set at link time, so this is an enrollment property, not a flag. bankferry asks
+  for `transactions` alone — adding `investments` would hide every bank that lacks it.
+  `CreateLinkToken` sends the transactions history-window parameter only when that product
+  is requested.
+- **`DefaultDBPath`**, **`Commands`** (the program's own verbs, dispatched after the shared
+  `plaid-*` set), and the usage text.
+
+bankferry's values (`cli.Bankferry`) are the ones this program has always used and are
+pinned by `TestBankferry_IdentityIsTheLegacyOne`; they name state that already exists in
+operators' keyrings, keys and vaults. Everything in `plaid` that needs the identity takes it
+as a parameter (`LinkOptions.Identity`, `LoadVault`/`CreateVault`/`HardwareDecrypter.RP`,
+`BackupWarning.Message(program)`); only `secrets` holds it as process state, because the
+keyring service is process state.
+
 ## Architecture Overview
 
 ```
-main.go                        Entry point: delegates to cli.Run(os.Args)
+cmd/bankferry/main.go          Entry point: cli.Run(cli.Bankferry(), os.Args)
   |
   cli/                         CLI dispatcher and subcommands
-  |  cli.go                      Run() switches on command: help|learn|map
+  |  app.go                      App identity; Command; prog()
+  |  bankferry.go                Bankferry(): the shipped identity and its usage text
+  |  cli.go                      Run() installs the App, switches on the shared plaid-* commands,
+  |                              then App.Commands
   |  learn.go                    runLearn() — parse GnuCash, extract payees into DB
   |  map.go                      runMap() — transform OFX files with learned payee names
   |  io.go                       stdout()/stderr() helpers
@@ -230,7 +269,9 @@ reached the book. Do not reintroduce account classification during capture.
 ### Secret storage
 `secrets` exposes generic `Store(key, data, label, description)`, `Load(key)`,
 `Keys(prefix)`, and `Delete(key)` over the OS credential store via `99designs/keyring`,
-under the service name `"bankferry"`.
+under the service name installed by `SetServiceName` — `"bankferry"` for bankferry. The
+name is the namespace that separates the two programs' Items; see "Two programs, one
+module".
 
 **`github.com/danieljoos/wincred` must stay at v1.2.3 or later.** `keyring v1.2.2` depends
 on `wincred v1.1.2`, which routes `CredReadW` through a Go interface (`type proc interface{

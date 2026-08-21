@@ -54,10 +54,7 @@ func runFetch(args []string) {
 		os.Exit(1)
 	}
 
-	dbPath := os.Getenv("DATABASE_PATH")
-	if dbPath == "" {
-		dbPath = "bankferry.db"
-	}
+	dbPath := databasePath()
 
 	dryRun := os.Getenv("DRY_RUN") != "false"
 
@@ -71,7 +68,7 @@ func runFetch(args []string) {
 	}
 	if len(items) == 0 {
 		stderr("No linked institutions in %s.\n", env)
-		stderr("Run 'bankferry plaid-link --env %s' first.\n", env)
+		stderr("Run '%s plaid-link --env %s' first.\n", prog(), env)
 		os.Exit(1)
 	}
 
@@ -128,7 +125,7 @@ func runFetch(args []string) {
 		stdout("Set DRY_RUN=false in .env to write OFX files.\n")
 	} else {
 		stdout("Exported %d new transaction(s) to %s.\n", totalNew, unmappedDir)
-		stdout("Run 'bankferry map' to clean payee names into mapped/.\n")
+		stdout("Run '%s map' to clean payee names into mapped/.\n", prog())
 	}
 	if failed > 0 {
 		os.Exit(1)
@@ -360,7 +357,7 @@ func pendingPaths(results []ofxexport.AccountResult) []string {
 func relinkNeeded(env plaid.Environment, item plaid.Item) error {
 	stderr("  needs re-authentication; nothing was fetched\n")
 	stderr("  repair it in a browser, which consumes no Item:\n")
-	stderr("    bankferry plaid-relink --env %s --item %s\n", env, item.ItemID)
+	stderr("    %s plaid-relink --env %s --item %s\n", prog(), env, item.ItemID)
 	return errNeedsRelink
 }
 

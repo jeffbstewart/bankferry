@@ -103,7 +103,7 @@ func TestPermitsDuplicate_EmptyPermissionNeverMatches(t *testing.T) {
 func TestDuplicateRefusal_NamesTheWayThrough(t *testing.T) {
 	existing := []Item{testItem("item_1", "ins_capone", "Capital One")}
 
-	msg := duplicateRefusal("Capital One", existing)
+	msg := duplicateRefusal("bankferry", "Capital One", existing)
 
 	for _, want := range []string{
 		"Capital One",
@@ -192,7 +192,7 @@ func TestHandleExchange_RefusesADuplicateWithoutExchanging(t *testing.T) {
 	finished := false
 
 	handleExchange(context.Background(), w, exchangePost(t, "ins_capone", "Capital One"),
-		Sandbox, client, newTestSession(t), "", func(LinkResult) { finished = true })
+		Sandbox, client, newTestSession(t), testExchangeOpts(""), func(LinkResult) { finished = true })
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
@@ -229,7 +229,7 @@ func TestHandleExchange_DuplicateOfPermitsASecondLogin(t *testing.T) {
 	var result LinkResult
 
 	handleExchange(context.Background(), w, exchangePost(t, "ins_capone", "Capital One"),
-		Sandbox, client, newTestSession(t), "item_1", func(res LinkResult) { result = res })
+		Sandbox, client, newTestSession(t), testExchangeOpts("item_1"), func(res LinkResult) { result = res })
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body:\n%s", w.Code, w.Body.String())
@@ -277,7 +277,7 @@ func TestHandleExchange_DuplicateOfDoesNotLicenseAnotherInstitution(t *testing.T
 
 	// Permission names the Capital One item; the browser reports Chase.
 	handleExchange(context.Background(), w, exchangePost(t, "ins_chase", "Chase"),
-		Sandbox, client, newTestSession(t), "item_1", func(LinkResult) {})
+		Sandbox, client, newTestSession(t), testExchangeOpts("item_1"), func(LinkResult) {})
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
@@ -299,7 +299,7 @@ func TestHandleExchange_FirstLinkAtAnInstitutionIsNotADuplicate(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	handleExchange(context.Background(), w, exchangePost(t, "ins_chase", "Chase"),
-		Sandbox, client, newTestSession(t), "", func(LinkResult) {})
+		Sandbox, client, newTestSession(t), testExchangeOpts(""), func(LinkResult) {})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body:\n%s", w.Code, w.Body.String())
@@ -379,6 +379,7 @@ func runLinkServer(t *testing.T, opts LinkOptions, client *plaidsdk.APIClient) (
 
 	opts.AccessKey = "test-access-key"
 	opts.BindAddr = freeAddr(t)
+	opts.Identity = testLinkIdentity
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -513,4 +514,10 @@ func TestStartLinkServer_DuplicateOfReachesTheGate(t *testing.T) {
 	if len(items) != 2 {
 		t.Errorf("stored %d items, want both logins: %+v", len(items), items)
 	}
+}
+
+// testExchangeOpts builds the options handleExchange reads: the identity that
+// names the program in a refusal, and the one duplicate it permits.
+func testExchangeOpts(duplicateOf string) LinkOptions {
+	return LinkOptions{Identity: testLinkIdentity, DuplicateOfItemID: duplicateOf}
 }

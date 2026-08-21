@@ -31,8 +31,8 @@ import (
 //
 // Between the two, break the Item and repair it:
 //
-//	go run . plaid-reset-login --env sandbox
-//	go run . plaid-relink --env sandbox      (completes in a browser)
+//	go run ./cmd/bankferry plaid-reset-login --env sandbox
+//	go run ./cmd/bankferry plaid-relink --env sandbox      (completes in a browser)
 
 // snapshotTxn is the identity of one posted transaction, as it must survive
 // a re-authentication.
@@ -161,8 +161,8 @@ func TestIntegration_TransactionIDsSurviveReauth(t *testing.T) {
 
 Now break and repair the Item, then re-run this test:
 
-    go run . plaid-reset-login --env sandbox
-    go run . plaid-relink --env sandbox      (completes in a browser)
+    go run ./cmd/bankferry plaid-reset-login --env sandbox
+    go run ./cmd/bankferry plaid-relink --env sandbox      (completes in a browser)
     go test ./plaid/... -run TransactionIDsSurviveReauth -v`,
 			len(current), path)
 	}

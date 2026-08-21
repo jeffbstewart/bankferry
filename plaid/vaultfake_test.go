@@ -287,3 +287,22 @@ func (f *fakeAuth) prf(credID, salt []byte) []byte {
 	mac.Write(salt)
 	return mac.Sum(nil)
 }
+
+// testRP is the relying party the tests enroll under. It is deliberately not
+// any shipped program's: a credential minted here must never be mistaken for
+// one of theirs.
+var testRP = RelyingParty{ID: "test.invalid", Name: "plaid-test"}
+
+// testLinkIdentity is the Link identity the in-process Link servers use.
+var testLinkIdentity = LinkIdentity{
+	ClientName: "plaid-test",
+	Products:   []Product{mustProduct("transactions")},
+}
+
+func mustProduct(s string) Product {
+	p, err := ParseProduct(s)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}

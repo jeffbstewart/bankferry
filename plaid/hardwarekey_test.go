@@ -54,7 +54,7 @@ func enrollOne(t *testing.T, env Environment) (*fakeAuth, []byte) {
 	auth, roots := newFakeKey(t)
 	useTestRoots(t, roots)
 
-	sealed, err := CreateVault(env, testSecret, auth)
+	sealed, err := CreateVault(testRP, env, testSecret, auth)
 	if err != nil {
 		t.Fatalf("CreateVault: %v", err)
 	}
@@ -86,7 +86,7 @@ func readSecret(t *testing.T, sealed []byte, env Environment, auth touchvault.Au
 func mustOpen(t *testing.T, sealed []byte) touchvault.Vault {
 	t.Helper()
 
-	v, err := touchvault.OpenWith(sealed, vaultOptions())
+	v, err := touchvault.OpenWith(sealed, vaultOptions(testRP))
 	if err != nil {
 		t.Fatalf("touchvault.OpenWith: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestCreateVault_RejectsEmptySecret(t *testing.T) {
 	auth, roots := newFakeKey(t)
 	useTestRoots(t, roots)
 
-	if _, err := CreateVault(Production, "", auth); err == nil {
+	if _, err := CreateVault(testRP, Production, "", auth); err == nil {
 		t.Fatal("an empty secret was sealed without complaint")
 	}
 	if auth.enrollCalls != 0 {
@@ -159,7 +159,7 @@ func TestCreateVault_RefusesUnattestedAuthenticator(t *testing.T) {
 	useTestRoots(t, roots)
 	auth.pki = nil // a software authenticator attests to nothing
 
-	if _, err := CreateVault(Production, testSecret, auth); !errors.Is(err, touchvault.ErrNoAttestation) {
+	if _, err := CreateVault(testRP, Production, testSecret, auth); !errors.Is(err, touchvault.ErrNoAttestation) {
 		t.Fatalf("err = %v, want ErrNoAttestation", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestCreateVault_RefusesUnattestedAuthenticator(t *testing.T) {
 func TestCreateVault_DefaultTrustAnchorsRejectAnUnknownVendor(t *testing.T) {
 	auth, _ := newFakeKey(t) // deliberately NOT installing the test roots
 
-	if _, err := CreateVault(Production, testSecret, auth); !errors.Is(err, touchvault.ErrUntrustedAuthenticator) {
+	if _, err := CreateVault(testRP, Production, testSecret, auth); !errors.Is(err, touchvault.ErrUntrustedAuthenticator) {
 		t.Fatalf("err = %v, want ErrUntrustedAuthenticator", err)
 	}
 }
@@ -196,7 +196,7 @@ func TestVault_SecretIsBoundToItsEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, found, err := LoadVault(store, Production)
+	v, found, err := LoadVault(store, testRP, Production)
 	if err != nil || !found {
 		t.Fatalf("LoadVault: found=%v err=%v", found, err)
 	}
@@ -356,7 +356,7 @@ func TestDestroyVault_ForgetsEverythingAndCostsNoGesture(t *testing.T) {
 		t.Error("destroying the vault asked for a gesture; a lost key could then never be forgotten")
 	}
 
-	if _, found, err := LoadVault(store, Production); err != nil || found {
+	if _, found, err := LoadVault(store, testRP, Production); err != nil || found {
 		t.Fatalf("the vault survived: found=%v err=%v", found, err)
 	}
 }
@@ -376,7 +376,7 @@ func TestStorage_RoundTripThroughStore(t *testing.T) {
 		t.Fatal("the sealed vault was not stored under the environment key")
 	}
 
-	loaded, found, err := LoadVault(store, Production)
+	loaded, found, err := LoadVault(store, testRP, Production)
 	if err != nil || !found {
 		t.Fatalf("LoadVault: found=%v err=%v", found, err)
 	}
@@ -397,7 +397,7 @@ func TestStorage_RoundTripThroughStore(t *testing.T) {
 }
 
 func TestStorage_AbsentIsNotAnError(t *testing.T) {
-	_, found, err := LoadVault(newFakeBlobStore(), Production)
+	_, found, err := LoadVault(newFakeBlobStore(), testRP, Production)
 	if err != nil {
 		t.Fatalf("an absent vault returned an error: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestStorage_CorruptVaultIsAnError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, found, err := LoadVault(store, Production); err == nil {
+	if _, found, err := LoadVault(store, testRP, Production); err == nil {
 		t.Fatalf("corrupt bytes loaded without complaint (found=%v)", found)
 	}
 }
@@ -443,6 +443,7 @@ func TestHardwareDecrypter_RefusesUnderTest(t *testing.T) {
 
 	h := HardwareDecrypter{
 		Store: store,
+		RP:    testRP,
 		New:   func() (touchvault.Authenticator, error) { return auth, nil },
 	}
 
@@ -467,7 +468,7 @@ func TestEnvironmentDecrypter_Routes(t *testing.T) {
 	f := useFakeStore(t)
 	f.items[secretKey(Sandbox)] = []byte("sandbox_secret")
 
-	dec := DefaultDecrypter(newFakeBlobStore())
+	dec := DefaultDecrypter(newFakeBlobStore(), testRP)
 
 	secret, err := dec.DecryptAPIKey(Sandbox)
 	if err != nil {
@@ -483,7 +484,7 @@ func TestEnvironmentDecrypter_Routes(t *testing.T) {
 }
 
 func TestEnvironmentDecrypter_RejectsUnknownEnvironment(t *testing.T) {
-	dec := DefaultDecrypter(newFakeBlobStore())
+	dec := DefaultDecrypter(newFakeBlobStore(), testRP)
 
 	if _, err := dec.DecryptAPIKey(Environment("staging")); err == nil {
 		t.Fatal("an unknown environment was routed without complaint")

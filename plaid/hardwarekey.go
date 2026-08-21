@@ -27,17 +27,27 @@ import (
 	"github.com/jeffbstewart/touchvault/fido"
 )
 
-// hardwareRPID scopes our credentials on the key.
+// RelyingParty is the WebAuthn identity our vaults enroll under. Each
+// program built from this module has its own; the CLI supplies it.
 //
-// It is a reserved, permanently unresolvable domain (RFC 2606), which is
-// correct for a relying party that is not a web origin. WebAuthn isolates by
-// RP ID, so credentials created here cannot see, and cannot be seen by, the
-// operator's Google or bank credentials on the same key.
+// ID should be a reserved, permanently unresolvable domain (RFC 2606), which
+// is correct for a relying party that is not a web origin. WebAuthn isolates
+// by RP ID, so credentials created under one cannot see, and cannot be seen
+// by, the operator's Google or bank credentials on the same key.
 //
-// Changing this string orphans every enrolled credential. Do not.
-const hardwareRPID = "bankferry.invalid"
+// Changing a program's ID orphans every credential it has enrolled. Do not.
+type RelyingParty struct {
+	ID   string
+	Name string
+}
 
-const hardwareRPName = "bankferry"
+// Validate refuses an incomplete relying party before it reaches hardware.
+func (rp RelyingParty) Validate() error {
+	if rp.ID == "" || rp.Name == "" {
+		return errors.New("plaid: relying party needs both an ID and a name")
+	}
+	return nil
+}
 
 // KeySlots is how many security keys may be enrolled per environment: a
 // primary and one backup. More would be storage without a threat model; the
@@ -82,12 +92,12 @@ func secretName(env Environment) string {
 // below; a test process that swaps it can only fool itself.
 var attestationRoots = touchvault.BundledRoots
 
-// vaultOptions is the enrollment-time policy for our vaults: our RP identity,
+// vaultOptions is the enrollment-time policy for our vaults: the RP identity,
 // and the attestation anchors a key must chain to.
-func vaultOptions() touchvault.Options {
+func vaultOptions(rp RelyingParty) touchvault.Options {
 	return touchvault.Options{
-		RPID:   hardwareRPID,
-		RPName: hardwareRPName,
+		RPID:   rp.ID,
+		RPName: rp.Name,
 		Roots:  attestationRoots(),
 		Label:  SlotLabel(FirstKeySlot),
 	}
@@ -135,7 +145,10 @@ func SaveVault(store WrappedKeyStore, env Environment, sealed []byte) error {
 //
 // It costs no gesture: opening reads only the authenticated metadata. The
 // touch is spent at Unlock or Administer.
-func LoadVault(store WrappedKeyStore, env Environment) (v touchvault.Vault, found bool, err error) {
+func LoadVault(store WrappedKeyStore, rp RelyingParty, env Environment) (v touchvault.Vault, found bool, err error) {
+	if err := rp.Validate(); err != nil {
+		return nil, false, err
+	}
 	sealed, found, err := store.LoadWrappedAPIKey(string(env))
 	if err != nil {
 		return nil, false, err
@@ -144,7 +157,7 @@ func LoadVault(store WrappedKeyStore, env Environment) (v touchvault.Vault, foun
 		return nil, false, nil
 	}
 
-	v, err = touchvault.OpenWith(sealed, vaultOptions())
+	v, err = touchvault.OpenWith(sealed, vaultOptions(rp))
 	if err != nil {
 		return nil, false, fmt.Errorf("plaid: the stored %s vault is unreadable: %w", env, err)
 	}
@@ -173,12 +186,15 @@ func DestroyVault(store WrappedKeyStore, env Environment) error {
 // There is no automated-context refusal here, and there must not be: it would
 // make this function untestable while adding nothing. auth can only be real
 // hardware if it came from fido.New, which refuses on its own.
-func CreateVault(env Environment, secret string, auth touchvault.Authenticator) (sealed []byte, err error) {
+func CreateVault(rp RelyingParty, env Environment, secret string, auth touchvault.Authenticator) (sealed []byte, err error) {
+	if err := rp.Validate(); err != nil {
+		return nil, err
+	}
 	if secret == "" {
 		return nil, errors.New("plaid: secret is empty")
 	}
 
-	admin, err := touchvault.Create(auth, vaultOptions())
+	admin, err := touchvault.Create(auth, vaultOptions(rp))
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +274,9 @@ type HardwareDecrypter struct {
 	// Store holds the sealed vault. Required.
 	Store WrappedKeyStore
 
+	// RP is the relying party the vault was enrolled under. Required.
+	RP RelyingParty
+
 	// New opens the authenticator. Injectable so tests never reach hardware.
 	// Defaults to fido.New.
 	New func() (touchvault.Authenticator, error)
@@ -272,7 +291,7 @@ func (h HardwareDecrypter) DecryptAPIKey(env Environment) (string, error) {
 		return "", errors.New("plaid: HardwareDecrypter has no store")
 	}
 
-	v, found, err := LoadVault(h.Store, env)
+	v, found, err := LoadVault(h.Store, h.RP, env)
 	if err != nil {
 		return "", err
 	}
@@ -314,10 +333,10 @@ type EnvironmentDecrypter struct {
 
 // DefaultDecrypter is what the CLI installs: sandbox from the keyring,
 // production from a security key whose sealed vault lives in store.
-func DefaultDecrypter(store WrappedKeyStore) EnvironmentDecrypter {
+func DefaultDecrypter(store WrappedKeyStore, rp RelyingParty) EnvironmentDecrypter {
 	return EnvironmentDecrypter{
 		Sandbox:    KeyringDecrypter{},
-		Production: HardwareDecrypter{Store: store},
+		Production: HardwareDecrypter{Store: store, RP: rp},
 	}
 }
 

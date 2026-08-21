@@ -40,7 +40,7 @@ func linkOptions(uri, bind string) plaid.LinkOptions {
 		stderr("      URI; only your browser does, so it need not face the internet.\n\n")
 	}
 
-	return plaid.LinkOptions{RedirectURI: uri, BindAddr: bind}
+	return plaid.LinkOptions{Identity: app.Link, RedirectURI: uri, BindAddr: bind}
 }
 
 // redirectAndBindFlags registers the flags linkOptions consumes.
@@ -223,7 +223,7 @@ func runPlaidLink(args []string) {
 	stdout("Linked %s (item %s).\n", result.InstitutionName, result.ItemID)
 	stdout("\nThis item's access token now exists only in the OS keyring, and Plaid\n")
 	stdout("will not reissue it. Any existing backup is now out of date. Re-export:\n")
-	stdout("  bankferry plaid-export --env %s --out <file>\n", env)
+	stdout("  %s plaid-export --env %s --out <file>\n", prog(), env)
 }
 
 // minPassphraseLen is a floor against a slip of the finger, not a password
@@ -247,7 +247,7 @@ func runPlaidExport(args []string) {
 	out := *outFlag
 	if out == "" {
 		stderr("Error: --out <file> is required.\n")
-		stderr("Usage: bankferry plaid-export --env %s --out backup.tapb\n", env)
+		stderr("Usage: %s plaid-export --env %s --out backup.tapb\n", prog(), env)
 		os.Exit(1)
 	}
 
@@ -314,7 +314,7 @@ func exportItems(env plaid.Environment, out string) error {
 
 	stdout("\nWrote %s (%d bytes).\n", out, len(blob))
 	stdout("Verify it now, before you rely on it:\n")
-	stdout("  bankferry plaid-verify-backup --env %s --in %s\n", env, out)
+	stdout("  %s plaid-verify-backup --env %s --in %s\n", prog(), env, out)
 	return nil
 }
 
@@ -346,7 +346,7 @@ func warnStaleBackups(cmd string) {
 		}
 
 		stderr("\n--- backup reminder ---\n")
-		stderr("%s\n", warning.Message())
+		stderr("%s\n", warning.Message(prog()))
 
 		if offerExport(*warning) {
 			continue
@@ -398,7 +398,7 @@ func runPlaidVerifyBackup(args []string) {
 	in := *inFlag
 	if in == "" {
 		stderr("Error: --in <file> is required.\n")
-		stderr("Usage: bankferry plaid-verify-backup --env %s --in backup.tapb\n", env)
+		stderr("Usage: %s plaid-verify-backup --env %s --in backup.tapb\n", prog(), env)
 		os.Exit(1)
 	}
 
@@ -457,7 +457,7 @@ func runPlaidVerifyBackup(args []string) {
 	if len(unprotected) > 0 {
 		stdout("\n%d item(s) exist only in the keyring. Their access tokens exist\n", len(unprotected))
 		stdout("nowhere else, and Plaid will not reissue them. Re-export now:\n")
-		stdout("  bankferry plaid-export --env %s --out <new file>\n", env)
+		stdout("  %s plaid-export --env %s --out <new file>\n", prog(), env)
 	}
 
 	if !plaid.BackupIsFaithful(report) {
@@ -498,7 +498,7 @@ func runPlaidItems(args []string) {
 	}
 	if len(items) == 0 {
 		stdout("No linked institutions in %s.\n", env)
-		stdout("Run 'bankferry plaid-link --env %s' to add one.\n", env)
+		stdout("Run '%s plaid-link --env %s' to add one.\n", prog(), env)
 		return
 	}
 
@@ -544,7 +544,7 @@ func runPlaidItems(args []string) {
 	}
 
 	if needsRelink > 0 {
-		stdout("Repair with: bankferry plaid-relink --env %s --item <item_id>\n", env)
+		stdout("Repair with: %s plaid-relink --env %s --item <item_id>\n", prog(), env)
 		stdout("Update mode changes no token and consumes no Item.\n")
 	}
 }
@@ -587,7 +587,7 @@ func selectItem(env plaid.Environment, wanted string) plaid.Item {
 	}
 	if len(items) == 0 {
 		stderr("No linked institutions in %s.\n", env)
-		stderr("Run 'bankferry plaid-link --env %s' first.\n", env)
+		stderr("Run '%s plaid-link --env %s' first.\n", prog(), env)
 		os.Exit(1)
 	}
 
@@ -699,7 +699,7 @@ func runPlaidResetLogin(args []string) {
 	}
 
 	stdout("Item %s (%s) now requires re-authentication.\n", item.ItemID, item.InstitutionName)
-	stdout("Repair it with: bankferry plaid-relink --env %s --item %s\n", env, item.ItemID)
+	stdout("Repair it with: %s plaid-relink --env %s --item %s\n", prog(), env, item.ItemID)
 }
 
 // runPlaidInit prompts for the Plaid client ID and the secret for one
@@ -731,7 +731,7 @@ func runPlaidInit(args []string) {
 		}
 		stdout("Stored the Plaid client ID in the OS keyring.\n")
 		stdout("\nProduction's secret is not stored here. Seal it behind a security key:\n")
-		stdout("  bankferry plaid-enroll-key --env production\n")
+		stdout("  %s plaid-enroll-key --env production\n", prog())
 		return
 	}
 

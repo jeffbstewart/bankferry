@@ -69,7 +69,7 @@ func runPlaidRemove(args []string) {
 	// only Item, which is the wrong default when the act is irreversible.
 	if env == plaid.Production && *itemID == "" {
 		stderr("Error: --item <item_id> is required to remove a production Item.\n")
-		stderr("Run 'bankferry plaid-items --env production' to list them.\n")
+		stderr("Run '%s plaid-items --env production' to list them.\n", prog())
 		os.Exit(1)
 	}
 	item := selectItem(env, *itemID)
@@ -127,7 +127,7 @@ func runPlaidRemove(args []string) {
 	forgetSyncCursor(env, item.ItemID)
 
 	stdout("\nThe stored items have changed, so any backup is now out of date:\n")
-	stdout("  bankferry plaid-export --env %s --out <file>\n", env)
+	stdout("  %s plaid-export --env %s --out <file>\n", prog(), env)
 }
 
 // forgetSyncCursor drops the removed Item's cursor. A cursor outlives nothing

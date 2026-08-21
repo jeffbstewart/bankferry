@@ -20,7 +20,7 @@ func databasePath() string {
 	if p := os.Getenv("DATABASE_PATH"); p != "" {
 		return p
 	}
-	return "bankferry.db"
+	return app.DefaultDBPath
 }
 
 // openDB opens the database and returns it with a close function. The caller
@@ -81,7 +81,7 @@ func runPlaidEnrollKey(args []string) {
 	store, closeDB := openDB()
 	defer closeDB()
 
-	vault, found, err := plaid.LoadVault(store, env)
+	vault, found, err := plaid.LoadVault(store, app.RelyingParty, env)
 	if err != nil {
 		stderr("Error reading the enrolled keys: %v\n", err)
 		os.Exit(1)
@@ -112,7 +112,7 @@ func runPlaidEnrollKey(args []string) {
 
 	stdout("\nEnrolled a security key in %s slot %d (%s).\n", env, slot, plaid.SlotLabel(slot))
 
-	updated, found, err := plaid.LoadVault(store, env)
+	updated, found, err := plaid.LoadVault(store, app.RelyingParty, env)
 	if err != nil || !found {
 		stderr("Error re-reading the enrolled keys: found=%v err=%v\n", found, err)
 		os.Exit(1)
@@ -121,7 +121,7 @@ func runPlaidEnrollKey(args []string) {
 
 	if len(updated.Slots()) < plaid.KeySlots {
 		stdout("\nOnly one key is enrolled. Enroll a backup so a lost key is not a\n")
-		stdout("lockout:\n  bankferry plaid-enroll-key --env %s\n", env)
+		stdout("lockout:\n  %s plaid-enroll-key --env %s\n", prog(), env)
 	}
 }
 
@@ -149,7 +149,7 @@ func enrollFirstKeyFlow(env plaid.Environment, auth touchvault.Authenticator) []
 	stdout("credential, to bind the secret to it, and to prove the key's\n")
 	stdout("derivation depends on the whole salt.\n")
 
-	sealed, err := plaid.CreateVault(env, secret, auth)
+	sealed, err := plaid.CreateVault(app.RelyingParty, env, secret, auth)
 	if err != nil {
 		stderr("\nError enrolling the key: %v\n", err)
 		os.Exit(1)
@@ -181,14 +181,14 @@ func runPlaidListKeySlots(args []string) {
 	store, closeDB := openDB()
 	defer closeDB()
 
-	vault, found, err := plaid.LoadVault(store, env)
+	vault, found, err := plaid.LoadVault(store, app.RelyingParty, env)
 	if err != nil {
 		stderr("Error reading the enrolled keys: %v\n", err)
 		os.Exit(1)
 	}
 	if !found {
 		stdout("No security key is enrolled for %s.\n", env)
-		stdout("Enroll one:\n  bankferry plaid-enroll-key --env %s\n", env)
+		stdout("Enroll one:\n  %s plaid-enroll-key --env %s\n", prog(), env)
 		return
 	}
 
@@ -231,7 +231,7 @@ func runPlaidDeleteKeySlot(args []string) {
 	store, closeDB := openDB()
 	defer closeDB()
 
-	vault, found, err := plaid.LoadVault(store, env)
+	vault, found, err := plaid.LoadVault(store, app.RelyingParty, env)
 
 	// --force is deliberately not gated on the vault being readable. The reason
 	// to destroy a vault is that it can no longer be used, and "the stored bytes
@@ -297,7 +297,7 @@ func runPlaidDeleteKeySlot(args []string) {
 
 	stdout("\nRemoved slot %d.\n", slot)
 
-	updated, found, err := plaid.LoadVault(store, env)
+	updated, found, err := plaid.LoadVault(store, app.RelyingParty, env)
 	if err != nil || !found {
 		stderr("Error re-reading the enrolled keys: found=%v err=%v\n", found, err)
 		os.Exit(1)
@@ -369,5 +369,5 @@ func destroyVaultFlow(store plaid.WrappedKeyStore, env plaid.Environment, vault 
 	}
 
 	stdout("\nDestroyed. %s is unreachable until you enroll again:\n", env)
-	stdout("  bankferry plaid-enroll-key --env %s\n", env)
+	stdout("  %s plaid-enroll-key --env %s\n", prog(), env)
 }
