@@ -168,6 +168,8 @@ cmd/bankferry/main.go          Entry point: cli.Run(cli.Bankferry(), os.Args)
   cli/                         CLI dispatcher and subcommands
   |  app.go                      App identity; Command; prog()
   |  bankferry.go                Bankferry(): the shipped identity and its usage text
+  |  brokerferry.go              Brokerferry(): the second program's identity and usage text
+  |  investments.go              runInvestments() — holdings + transactions → snapshot file
   |  cli.go                      Run() installs the App, switches on the shared plaid-* commands,
   |                              then App.Commands
   |  learn.go                    runLearn() — parse GnuCash, extract payees into DB
@@ -192,6 +194,9 @@ cmd/bankferry/main.go          Entry point: cli.Run(cli.Bankferry(), os.Args)
   ofx/                         OFX 2.2 XML document generation and parsing
   |  ofx.go                      Statement/Transaction/Balance types, Write(w, stmt), Read(r)
   |                              ofxDate() helper formats civildate as YYYYMMDD
+  |
+  snapshot/                    brokerferry: plaid investments types → proto, and the file writer
+  |  snapshot.go                 Build(asOf, items), Writer{Dir, JSON, CreateFile, Exists}.Write()
   |
   ofxexport/                   Fetch→filter→write→mark orchestration
   |  ofxexport.go                TransactionFetcher/ExportStore interfaces, Exporter, ExportAccount()
@@ -382,7 +387,7 @@ thing the touch is worth. The current tally:
 
 | Act | Gestures | Notes |
 |---|---|---|
-| Read the production secret (`fetch`, `plaid-link`, …) | 1 | Once per command, at the composition root. Never lazily. |
+| Read the production secret (`fetch`, `investments`, `plaid-link`, …) | 1 | Once per command, at the composition root. Never lazily. |
 | `plaid-enroll-key`, first key | 3 | Create, derive, and prove the derivation depends on the whole salt. |
 | `plaid-enroll-key`, backup key | 1 + 3 | One on an enrolled key to recover the data key, three on the new one. The secret is never needed again. |
 | `plaid-delete-key-slot --key-slot <n>` | 1 | On a key that is **still** enrolled, so a lost key can be retired. |
@@ -426,6 +431,9 @@ is grouped and explains what each command costs.
 `plaid-link` takes `--duplicate-of <item id>` to link a second login at an already-linked
 institution; see "An Item is one login, not one institution" above.
 
+Both binaries share the Plaid and security-key commands; bankferry adds `fetch`, `learn`,
+`map`, and brokerferry adds `investments`.
+
 Plaid: `plaid-init`, `plaid-link`, `plaid-items`, `plaid-relink`, `plaid-reset-login`,
 `plaid-remove`, `plaid-export`, `plaid-verify-backup`. Production security key:
 `plaid-enroll-key`, `plaid-list-key-slots`, `plaid-delete-key-slot`. Fetching: `fetch`.
@@ -433,6 +441,33 @@ GnuCash: `learn`, `map`.
 
 Every run calls `warnStaleBackups`, which nags when the keyring holds Items no export
 covers.
+
+### investments: stateless by design
+`brokerferry investments` reads each Item's holdings and a window of investment
+transactions (`--days`, default 720), builds one `InvestmentsSnapshot` (`snapshot.Build`) and
+writes it with `snapshot.Writer`. **It records nothing between runs** — no cursor, no
+database write, no "exported" table — because holdings are levels, not deltas: Plaid serves
+the full current state on every call, so nothing can be lost by a crash and nothing needs
+deduplicating. Do not add bookkeeping here; if something wants to remember the last run, it
+belongs in finance2, which archives every upload. For the same reason it ignores `DRY_RUN`:
+`fetch`'s dry run guards the cursor, a dry run here would cost the same touch and calls for a
+file the operator can delete, and the shared `.env` would tie the switch to bankferry's.
+
+What does carry over from `fetch` is the file discipline, for the same reason: the final name
+is checked before anything is written, bytes go to `{final}.part` created with `O_EXCL`, and
+the rename is last. The name is `investments_{YYYYMMDD}_{HHMMSS}.pb`, unique only to the
+second, so two runs in one second collide and the second is refused rather than overwriting.
+
+An Item that cannot serve the product (`plaid.IsInvestmentsUnavailable`) or is not ready yet
+(`plaid.IsProductNotReady`) is reported and skipped; the snapshot covers the rest and the run
+exits 0. Any other failure on an Item is reported and the run exits 1 after writing what it
+could. `ITEM_LOGIN_REQUIRED` gets the same `plaid-relink` message `fetch` prints.
+
+`snapshot.Build` refuses a holding or transaction whose security is absent from the securities
+tables, rather than emitting an empty `SecurityRef`: finance2 matches by ticker, and a blank
+reference would import as "unknown security" instead of being caught. The holdings call's
+securities table takes precedence over the transactions call's for the same ID; the latter
+is sparser.
 
 ### fetch: the ordering is the design
 `fetch` syncs one Item at a time, converts through `plaid.SourceAccounts` /

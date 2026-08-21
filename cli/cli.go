@@ -276,8 +276,8 @@ func usage() {
 
 	stderr("Environment (.env)\n")
 	app.EnvUsage()
-	stderr("  PLAID_REDIRECT_URI   Default for --redirect-uri (note: URI, not URL)\n")
-	stderr("  PLAID_BIND_ADDR      Default for --bind\n\n")
+	stderr("  PLAID_REDIRECT_URI      Default for --redirect-uri (note: URI, not URL)\n")
+	stderr("  PLAID_BIND_ADDR         Default for --bind\n\n")
 
 	app.FirstRunUsage()
 }

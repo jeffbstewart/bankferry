@@ -18,6 +18,10 @@ GnuCash book ──► learn ──► payee rules ┘
 
 It formerly used a prior aggregator's API, which was withdrawn in July 2026.
 
+The same module builds a second program, **brokerferry**, which pulls brokerage holdings
+and investment transactions under its own Plaid account and writes the investments
+snapshot that [finance2](../finance2) imports. See [brokerferry](#brokerferry).
+
 ## Status
 
 Sandbox works end to end. Production is reachable only through a security key.
@@ -106,7 +110,8 @@ cp example.env .env
 | `OFX_OUTPUT_DIR` | Yes | — | Directory holding `.ofx` files; `map` writes to `mapped/` beneath it |
 | `DATABASE_PATH` | No | `bankferry.db` | Path to the SQLite database |
 | `GNUCASH_FILE` | Yes (for `learn`) | — | Path to your GnuCash file |
-| `DRY_RUN` | No | `true` | `fetch` reports what it would write, and writes nothing |
+| `DRY_RUN` | No | `true` | `fetch` reports what it would write, and writes nothing; `investments` ignores it |
+| `INVESTMENTS_OUTPUT_DIR` | Yes (brokerferry) | — | Directory `brokerferry investments` writes snapshots into |
 
 `.env` must **never** be committed. It is version-control-ignored.
 
@@ -397,7 +402,7 @@ fresh Plaid account — so these are noted, not urgent.
 
 | package | role |
 |---|---|
-| `cli` | command dispatch; the composition root |
+| `cli` | command dispatch; the composition root; the two program identities (`cli.App`) |
 | `plaid` | API clients, Item storage, link server, backup, adapter, the production vault glue |
 | `source` | provider-neutral account and transaction types |
 | `money` | exact fixed-point currency |
@@ -406,12 +411,44 @@ fresh Plaid account — so these are noted, not urgent.
 | `db` | SQLite: sync cursors, export tracking, payee rules |
 | `secrets` | OS keyring |
 | `civildate` | timezone-free calendar dates |
+| `proto`, `snapshot` | the investments contract shared with finance2, and the builder/writer for it |
+| `cmd/bankferry`, `cmd/brokerferry` | the two binaries |
 
 The database is created automatically. Migrations are embedded SQL in `db/migrations/`,
 applied in lexicographic order and tracked in `migrations_applied`.
 
 A new data provider is added by writing an adapter that populates `source.Account` and
 `source.Transaction`. Provider types never enter `ofxexport`, `db`, or `ofx`.
+
+## brokerferry
+
+`brokerferry` is a second binary built from the same packages. It exists so that brokerage
+accounts can be read under a **separate Plaid developer account**: its credentials, Items,
+security-key vault and database are all its own, and nothing in either program can reach
+the other's. Every `plaid-*` command works identically — `plaid-init`, `plaid-link`,
+`plaid-enroll-key`, `plaid-export` and the rest — against brokerferry's own keyring service
+and vault, and `plaid-link` requests the `investments` product instead of `transactions`, so
+Link offers only institutions that serve it.
+
+```sh
+go run ./cmd/brokerferry plaid-init --env sandbox
+go run ./cmd/brokerferry plaid-link --env sandbox
+go run ./cmd/brokerferry investments --env sandbox --json
+```
+
+`investments` reads each Item's holdings (as of now) and investment transactions (the last
+720 days by default; `--days` narrows it) and writes one `investments_{date}_{time}.pb` into
+`INVESTMENTS_OUTPUT_DIR` — the `InvestmentsSnapshot` of `proto/plaid_snapshot.proto`, which
+you upload through finance2's Imports screen. `--json` writes a readable rendering beside
+it. There is no cursor and no database bookkeeping: holdings are levels, each snapshot is
+the full state, and a re-run writes another file. A snapshot is never written over an
+existing one. `DRY_RUN` does not apply: `fetch`'s dry run protects a cursor Plaid never
+rewinds, and `investments` has nothing irreversible to protect. Every number in it is the exact decimal string Plaid sent; nothing passes
+through a float.
+
+Production costs one security-key touch per run, exactly like `fetch`. An Item whose
+institution cannot serve the product is reported and skipped, and the snapshot covers the
+rest.
 
 ## License
 
