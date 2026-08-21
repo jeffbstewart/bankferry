@@ -1,0 +1,99 @@
+// plaid_snapshot.proto — the bankferry→finance2 investments contract
+// (docs/design/plaid-investments-pipeline.md).
+//
+// PRIMARY SOURCE: bankferry (ruling, Jeff 2026-07-17) — finance2
+// carries this verbatim clone for its own codegen; contract changes
+// land in bankferry first once its copy exists. Deliberately
+// self-contained (no imports) so the file clones between repos with
+// zero dependencies.
+//
+// Hard rules: no float/double anywhere near money or quantities —
+// exact decimal strings end to end (bankferry fetches via raw-JSON
+// json.Number; the official SDKs decode money as floats). No secrets:
+// item_ref and account_ref are opaque identifiers, never access
+// tokens. Snapshot files hold real account data — they are never repo
+// content in either project.
+syntax = "proto3";
+
+package bankferry.investments;
+
+option java_package = "net.stewart.bankferry.proto";
+option java_multiple_files = true;
+option go_package = "github.com/jeffbstewart/bankferry/proto/investments";
+
+message InvestmentsSnapshot {
+  // Bumped on any breaking change; a reader that does not know the
+  // version rejects the snapshot loudly rather than misreading it.
+  int32 schema_version = 1; // currently 1
+  Date as_of = 2;           // the fetch date (civil, no timezone)
+  repeated ItemSnapshot items = 3;
+}
+
+message ItemSnapshot {
+  string institution_entry = 1; // Plaid institution name, e.g. "Vanguard"
+  string item_ref = 2;          // opaque, stable per item — never the access token
+  repeated Account accounts = 3;
+}
+
+message Account {
+  string account_ref = 1;      // Plaid account_id (opaque)
+  string name = 2;
+  string official_name = 3;    // Plaid's longer name, when present
+  string mask = 4;             // last digits — the human's matching aid
+  string type = 5;             // e.g. "investment"
+  string subtype = 6;          // e.g. "401k", "brokerage", "roth"
+  Money institution_value = 7; // institution-reported total value
+  Money cash_balance = 8;      // cash/sweep component, when reported
+  repeated Holding holdings = 9;
+  repeated InvestmentTransaction transactions = 10;
+}
+
+message Holding {
+  SecurityRef security = 1;
+  Decimal quantity = 2;
+  Money cost_basis = 3;          // aggregate as reported; may be absent
+  Money institution_price = 4;   // institution-reported price per unit
+  Date price_as_of = 5;
+  Money institution_value = 6;   // institution-reported position value
+}
+
+message SecurityRef {
+  string plaid_security_id = 1;
+  string ticker = 2; // any of ticker/cusip/isin may be empty
+  string cusip = 3;
+  string isin = 4;
+  string name = 5;
+  string type = 6;
+  string currency_code = 7; // ISO 4217
+  bool is_cash_equivalent = 8;
+}
+
+message InvestmentTransaction {
+  string transaction_ref = 1; // Plaid investment_transaction_id (opaque)
+  Date date = 2;
+  string name = 3;
+  string type = 4;    // buy | sell | cash | fee | transfer | ...
+  string subtype = 5;
+  SecurityRef security = 6; // absent for account-level cash/fee rows
+  Decimal quantity = 7;
+  Money amount = 8;
+  Money price = 9;
+  Money fees = 10;
+}
+
+// Exact decimal string, e.g. "1234.5600" — never float/double.
+message Decimal {
+  string value = 1;
+}
+
+message Money {
+  Decimal amount = 1;
+  string currency_code = 2; // ISO 4217
+}
+
+// Civil calendar date; no time of day, no timezone.
+message Date {
+  int32 year = 1;
+  int32 month = 2; // 1-12
+  int32 day = 3;   // 1-31
+}

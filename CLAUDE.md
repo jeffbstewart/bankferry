@@ -198,6 +198,12 @@ cmd/bankferry/main.go          Entry point: cli.Run(cli.Bankferry(), os.Args)
   |                              buildStatement(), ofxTransactionType(), mapAccountSubtype()
   |                              Currently has no Fetcher implementation — awaiting a source adapter.
   |
+  proto/                       Wire contracts shared with other projects; generated code committed
+  |  plaid_snapshot.proto        The brokerferry→finance2 investments snapshot (primary source;
+  |                              finance2 holds a verbatim clone — change here first, note it there)
+  |  generate.go                 go:generate anchor; see proto/README.md for regenerating
+  |  investments/                protoc-gen-go output (package investments)
+  |
   secrets/                     OS keyring credential storage
   |  secrets.go                  Store(), Load(), Delete()
   |                              Uses 99designs/keyring (Keychain/WinCred/SecretService)
