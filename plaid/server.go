@@ -59,6 +59,10 @@ const sessionCookie = "plaidlink_session"
 
 // LinkOptions configures a link or relink flow.
 type LinkOptions struct {
+	// Identity names the program to Plaid and fixes the products a new Item
+	// is created with. Required.
+	Identity LinkIdentity
+
 	// RedirectURI is where OAuth institutions return the user. Required for
 	// Chase. Must be HTTPS outside Sandbox, and registered in the Plaid
 	// Dashboard.
@@ -373,7 +377,7 @@ func (s *linkSession) guard(name string, next http.HandlerFunc) http.HandlerFunc
 // StartLinkServer serves the Plaid Link page, waits for the user to complete a
 // Link session in the browser, persists the resulting Item, and returns.
 func StartLinkServer(ctx context.Context, env Environment, client *plaidsdk.APIClient, opts LinkOptions) (LinkResult, error) {
-	linkToken, err := CreateLinkToken(ctx, client, opts.RedirectURI)
+	linkToken, err := CreateLinkToken(ctx, client, opts.Identity, opts.RedirectURI)
 	if err != nil {
 		return LinkResult{}, err
 	}
@@ -388,7 +392,7 @@ func StartLinkServer(ctx context.Context, env Environment, client *plaidsdk.APIC
 	var result LinkResult
 	err = serveLink(ctx, env, data, opts, func(mux *http.ServeMux, session *linkSession, finish func()) {
 		mux.HandleFunc("/exchange", session.guard("an exchange", func(w http.ResponseWriter, r *http.Request) {
-			handleExchange(ctx, w, r, env, client, session, opts.DuplicateOfItemID, func(res LinkResult) {
+			handleExchange(ctx, w, r, env, client, session, opts, func(res LinkResult) {
 				result = res
 				finish()
 			})
@@ -408,7 +412,7 @@ func StartLinkServer(ctx context.Context, env Environment, client *plaidsdk.APIC
 // of an OAuth callback — raising a security-key touch at a moment the
 // operator cannot connect to any decision they made.
 func StartRelinkServer(ctx context.Context, env Environment, client *plaidsdk.APIClient, dataClient *DataClient, item Item, opts LinkOptions) error {
-	linkToken, err := CreateUpdateLinkToken(ctx, client, item.AccessToken, opts.RedirectURI)
+	linkToken, err := CreateUpdateLinkToken(ctx, client, opts.Identity, item.AccessToken, opts.RedirectURI)
 	if err != nil {
 		return err
 	}
@@ -479,7 +483,7 @@ func serveLink(ctx context.Context, env Environment, data linkPageData, opts Lin
 		}
 		if !session.admits(r) {
 			log.Printf("plaid: refused the entry page to %s: wrong or missing access key", r.RemoteAddr)
-			http.Error(w, "Open the address printed by bankferry, including its key.",
+			http.Error(w, "Open the address printed by "+opts.Identity.ClientName+", including its key.",
 				http.StatusForbidden)
 			return
 		}
@@ -677,7 +681,7 @@ func itemIDs(items []Item) string {
 // be left reading the source to find that out. Naming the flag here keeps the
 // decision cold: they re-run deliberately rather than being asked to consent
 // mid-flow, with a public token burning and momentum carrying them through.
-func duplicateRefusal(institutionName string, existing []Item) string {
+func duplicateRefusal(program, institutionName string, existing []Item) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s is already linked (%s). Nothing was exchanged, so no Item was consumed.\n\n",
 		institutionName, itemIDs(existing))
@@ -685,7 +689,7 @@ func duplicateRefusal(institutionName string, existing []Item) string {
 	b.WriteString("If you meant to link a second, different login at this institution, that is\n")
 	b.WriteString("a separate Item and costs another of the ten. Re-run naming the Item the new\n")
 	b.WriteString("one sits beside:\n\n")
-	fmt.Fprintf(&b, "    bankferry plaid-link --env <env> --duplicate-of %s\n", existing[0].ItemID)
+	fmt.Fprintf(&b, "    %s plaid-link --env <env> --duplicate-of %s\n", program, existing[0].ItemID)
 	return b.String()
 }
 
@@ -703,9 +707,10 @@ func handleExchange(
 	env Environment,
 	client *plaidsdk.APIClient,
 	session *linkSession,
-	allowDuplicateOf string,
+	opts LinkOptions,
 	finish func(LinkResult),
 ) {
+	allowDuplicateOf := opts.DuplicateOfItemID
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -733,7 +738,7 @@ func handleExchange(
 	if len(existing) > 0 && !permitsDuplicate(existing, allowDuplicateOf) {
 		log.Printf("plaid: refusing to link %s (%s): already linked as %s",
 			req.InstitutionName, req.InstitutionID, itemIDs(existing))
-		http.Error(w, duplicateRefusal(req.InstitutionName, existing), http.StatusConflict)
+		http.Error(w, duplicateRefusal(opts.Identity.ClientName, req.InstitutionName, existing), http.StatusConflict)
 		return
 	}
 	if len(existing) > 0 {

@@ -149,29 +149,32 @@ func allDigits(s string) bool {
 }
 
 // SuggestedCommand is the complete command that would bring the backup up to
-// date. It falls back to a placeholder when no destination can be inferred.
-func (w BackupWarning) SuggestedCommand() string {
+// date, for the named program. It falls back to a placeholder when no
+// destination can be inferred.
+func (w BackupWarning) SuggestedCommand(program string) string {
 	out := w.SuggestedPath()
 	if out == "" {
-		return fmt.Sprintf("bankferry plaid-export --env %s --out <file>", w.Environment)
+		return fmt.Sprintf("%s plaid-export --env %s --out <file>", program, w.Environment)
 	}
-	return fmt.Sprintf("bankferry plaid-export --env %s --out %s", w.Environment, out)
+	return fmt.Sprintf("%s plaid-export --env %s --out %s", program, w.Environment, out)
 }
 
-func (w BackupWarning) Message() string {
+// Message renders the warning for the operator, naming the program whose
+// command repairs it.
+func (w BackupWarning) Message(program string) string {
 	if w.NeverExported {
 		return fmt.Sprintf(
 			"%d %s item(s) have never been exported. Their access tokens exist only in\n"+
 				"this machine's keyring and Plaid will not reissue them.\n"+
 				"  %s",
-			w.ItemCount, w.Environment, w.SuggestedCommand())
+			w.ItemCount, w.Environment, w.SuggestedCommand(program))
 	}
 	return fmt.Sprintf(
 		"%s items have changed since the last export on %s (%s).\n"+
 			"Access tokens added or rotated since then exist only in this machine's keyring.\n"+
 			"  %s",
 		w.Environment, w.LastExport.Local().Format("2006-01-02"), w.PreviousPath,
-		w.SuggestedCommand())
+		w.SuggestedCommand(program))
 }
 
 // CheckBackup reports whether the environment's Items are covered by the

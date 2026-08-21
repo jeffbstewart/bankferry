@@ -87,10 +87,13 @@ If that is more than you want to run, two walk-backs keep the rest useful:
 ```sh
 go build ./...
 go test ./...
-go run . help
+go run ./cmd/bankferry help
 ```
 
-`bankferry help` explains every command and what each one costs.
+`bankferry help` explains every command and what each one costs. The binary lives under
+`cmd/bankferry`; the module is laid out to build a second program, `brokerferry`, from the
+same packages with its own Plaid credentials, Items and security-key vault (see
+`cli.App`).
 
 ## Configuration
 

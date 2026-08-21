@@ -1,3 +1,6 @@
+// Command bankferry pulls bank and credit card transactions from Plaid and
+// prepares them for GnuCash. It is one of two programs built from this
+// module; see cli.App.
 package main
 
 import (
@@ -17,5 +20,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error loading .env: %v\n", err)
 		os.Exit(1)
 	}
-	cli.Run(os.Args)
+	cli.Run(cli.Bankferry(), os.Args)
 }

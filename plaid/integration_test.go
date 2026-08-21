@@ -30,6 +30,11 @@ func requireSandboxCredentials(t *testing.T) {
 		t.Skip("skipping: integration test reaches the Plaid sandbox over the network")
 	}
 
+	// These tests run against the operator's own bankferry sandbox Items, so
+	// they read bankferry's keyring service — the one thing the integration
+	// suite shares with the shipped binary.
+	secrets.SetServiceName("bankferry")
+
 	if _, err := plaid.LoadCredentials(plaid.Sandbox, plaid.KeyringDecrypter{}); err != nil {
 		if errors.Is(err, secrets.ErrNotFound) {
 			t.Skip("skipping: no Plaid sandbox credentials in the OS keyring " +
@@ -69,7 +74,7 @@ func TestIntegration_CreateLinkToken(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	token, err := plaid.CreateLinkToken(ctx, client, "")
+	token, err := plaid.CreateLinkToken(ctx, client, integrationLinkIdentity(), "")
 	if err != nil {
 		t.Fatalf("CreateLinkToken: %v", err)
 	}
@@ -122,7 +127,7 @@ func TestIntegration_KeyringDecrypterServesSandbox(t *testing.T) {
 const testAccessKey = "test-access-key"
 
 func testLinkOptions() plaid.LinkOptions {
-	return plaid.LinkOptions{AccessKey: testAccessKey}
+	return plaid.LinkOptions{AccessKey: testAccessKey, Identity: integrationLinkIdentity()}
 }
 
 // entryURL is the entry page with the access key, which is the only way in.
@@ -530,4 +535,12 @@ func TestIntegration_Exchange_RejectsBadRequests(t *testing.T) {
 			}
 		})
 	}
+}
+
+func integrationLinkIdentity() plaid.LinkIdentity {
+	p, err := plaid.ParseProduct("transactions")
+	if err != nil {
+		panic(err)
+	}
+	return plaid.LinkIdentity{ClientName: "bankferry-integration", Products: []plaid.Product{p}}
 }

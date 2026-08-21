@@ -11,12 +11,60 @@ import (
 	plaidsdk "github.com/plaid/plaid-go/v43/plaid"
 )
 
-// clientName is shown to the user inside the Link flow.
-const clientName = "bankferry"
+// LinkIdentity is what a program calls itself inside the Link flow and
+// which Plaid products its Items are created with. Each program built from
+// this module has its own; the CLI supplies it.
+type LinkIdentity struct {
+	// ClientName is shown to the user inside Link.
+	ClientName string
 
-// clientUserID identifies the end user to Plaid. This tool serves a
-// single person — the operator — so the value is constant.
-const clientUserID = "bankferry-local-user"
+	// Products are requested when an Item is created. Plaid shows only
+	// institutions that support every one of them, so a program lists what
+	// it actually reads and nothing more; bankferry asks for transactions
+	// alone so that no bank is hidden for lacking investments. Plaid fixes
+	// an Item's products at link time, which is why this is an enrollment
+	// property and not a per-command flag.
+	Products []Product
+}
+
+// Product is a Plaid product name, validated by ParseProduct.
+type Product struct{ s string }
+
+// String returns the product name as Plaid spells it.
+func (p Product) String() string { return p.s }
+
+// ParseProduct validates a product name against the ones this module knows
+// how to read. Others exist, but asking for a product nothing here consumes
+// would only narrow the institutions Link offers.
+func ParseProduct(s string) (Product, error) {
+	switch plaidsdk.Products(s) {
+	case plaidsdk.PRODUCTS_TRANSACTIONS, plaidsdk.PRODUCTS_INVESTMENTS:
+		return Product{s}, nil
+	default:
+		return Product{}, fmt.Errorf("plaid: unsupported product %q", s)
+	}
+}
+
+// Validate refuses an identity that would create an Item with no name or no
+// products.
+func (id LinkIdentity) Validate() error {
+	if id.ClientName == "" {
+		return errors.New("plaid: link identity has no client name")
+	}
+	if len(id.Products) == 0 {
+		return errors.New("plaid: link identity requests no products")
+	}
+	for _, p := range id.Products {
+		if p.s == "" {
+			return errors.New("plaid: link identity has an unparsed product")
+		}
+	}
+	return nil
+}
+
+// userID identifies the end user to Plaid. Each program serves a single
+// person — the operator — so it is a constant per program.
+func (id LinkIdentity) userID() string { return id.ClientName + "-local-user" }
 
 // historyDaysRequested is the transaction history window requested when
 // an Item is created. Plaid fixes this at link time: "Once Transactions
@@ -95,27 +143,32 @@ func apiError(op string, httpResp *http.Response, err error) error {
 // includes Chase, and Plaid demands it be registered in the Dashboard under
 // Allowed redirect URIs and served over HTTPS. Only Sandbox permits an
 // http://localhost redirect.
-func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, redirectURI string) (string, error) {
+func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIdentity, redirectURI string) (string, error) {
+	if err := id.Validate(); err != nil {
+		return "", err
+	}
 	if err := ValidateRedirectURI(redirectURI); err != nil {
 		return "", err
 	}
 
-	user := plaidsdk.NewLinkTokenCreateRequestUser(clientUserID)
+	user := plaidsdk.NewLinkTokenCreateRequestUser(id.userID())
 
 	req := plaidsdk.NewLinkTokenCreateRequest(
-		clientName,
+		id.ClientName,
 		"en",
 		[]plaidsdk.CountryCode{plaidsdk.COUNTRYCODE_US},
 	)
 	req.SetUser(*user)
-	req.SetProducts([]plaidsdk.Products{plaidsdk.PRODUCTS_TRANSACTIONS})
+	req.SetProducts(id.sdkProducts())
 	if redirectURI != "" {
 		req.SetRedirectUri(redirectURI)
 	}
 
-	txns := plaidsdk.NewLinkTokenTransactions()
-	txns.SetDaysRequested(historyDaysRequested)
-	req.SetTransactions(*txns)
+	if id.requests(plaidsdk.PRODUCTS_TRANSACTIONS) {
+		txns := plaidsdk.NewLinkTokenTransactions()
+		txns.SetDaysRequested(historyDaysRequested)
+		req.SetTransactions(*txns)
+	}
 
 	resp, httpResp, err := client.PlaidApi.LinkTokenCreate(ctx).
 		LinkTokenCreateRequest(*req).Execute()
@@ -138,15 +191,18 @@ func CreateLinkToken(ctx context.Context, client *plaidsdk.APIClient, redirectUR
 // in update mode. The Item's access_token has not changed." Exchanging the
 // public_token here would be a mistake, and on production could cost one of
 // the ten Items allowed for the lifetime of the account.
-func CreateUpdateLinkToken(ctx context.Context, client *plaidsdk.APIClient, accessToken, redirectURI string) (string, error) {
+func CreateUpdateLinkToken(ctx context.Context, client *plaidsdk.APIClient, id LinkIdentity, accessToken, redirectURI string) (string, error) {
+	if err := id.Validate(); err != nil {
+		return "", err
+	}
 	if err := ValidateRedirectURI(redirectURI); err != nil {
 		return "", err
 	}
 
-	user := plaidsdk.NewLinkTokenCreateRequestUser(clientUserID)
+	user := plaidsdk.NewLinkTokenCreateRequestUser(id.userID())
 
 	req := plaidsdk.NewLinkTokenCreateRequest(
-		clientName,
+		id.ClientName,
 		"en",
 		[]plaidsdk.CountryCode{plaidsdk.COUNTRYCODE_US},
 	)
@@ -229,4 +285,21 @@ func ExchangePublicToken(ctx context.Context, client *plaidsdk.APIClient, public
 	}
 
 	return resp.GetAccessToken(), resp.GetItemId(), nil
+}
+
+func (id LinkIdentity) requests(p plaidsdk.Products) bool {
+	for _, q := range id.Products {
+		if plaidsdk.Products(q.s) == p {
+			return true
+		}
+	}
+	return false
+}
+
+func (id LinkIdentity) sdkProducts() []plaidsdk.Products {
+	out := make([]plaidsdk.Products, len(id.Products))
+	for i, p := range id.Products {
+		out[i] = plaidsdk.Products(p.s)
+	}
+	return out
 }
