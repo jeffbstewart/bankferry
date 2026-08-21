@@ -21,9 +21,10 @@ Windows, macOS, and Linux.
 It formerly used a prior aggregator's API, which was withdrawn in July 2026.
 
 **Production is enabled.** Plaid's Trial plan allows ten Production Items for the lifetime
-of the account, and removing one does not free its slot, so the guardrails live where the
-cost is incurred: `plaid-link --env production` demands a typed confirmation and refuses
-without a terminal.
+of the account — shared by bankferry and brokerferry, which run under one Plaid account (see
+"Two programs, one module") — and removing one does not free its slot, so the guardrails live
+where the cost is incurred: `plaid-link --env production` demands a typed confirmation and
+refuses without a terminal.
 
 **The production API secret is sealed behind a FIDO2 security key.** Sandbox is served
 from the keyring; production is not. The secret is unsealed only by a key derived from a
@@ -135,9 +136,17 @@ from the configured redirect URI, never one the caller supplies.
 The module builds two binaries from the same packages: `bankferry` (bank and credit card
 transactions → OFX → GnuCash) and `brokerferry` (brokerage holdings → investments snapshot
 → finance2). They are separate programs rather than modes of one **so that their Plaid
-state is separate by construction**: each has its own Plaid developer account and
-credentials, its own Items, its own security-key vault, and its own database, and no flag
-can point one at the other's.
+state is separate by construction**: each has its own keyring namespace, its own Items, its
+own security-key vault, and its own database, and no flag can point one at the other's.
+
+**Both run under one Plaid account.** The design allowed a second developer account, but
+Plaid does not make one practical, so the same client ID and secret are stored in each
+program's keyring service and the production secret is sealed in two vaults, one per program.
+What that costs: the **ten-Item lifetime cap is shared across both programs** and nothing in
+either shows the combined count; rotating the secret means re-enrolling both vaults; and the
+`--duplicate-of` guard is per program, so linking one institution in both binaries spends
+two slots. What it does not cost: the isolation above is unchanged — neither program can
+read, list, spend or export the other's Items.
 
 `cli.App` is the identity, installed once by `main` through `cli.Run(app, os.Args)`:
 
