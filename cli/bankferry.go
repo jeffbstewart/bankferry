@@ -64,10 +64,10 @@ func bankferryUsage() {
 }
 
 func bankferryEnvUsage() {
-	stderr("  OFX_OUTPUT_DIR       fetch writes to unmapped/ beneath it; map writes mapped/\n")
-	stderr("  DATABASE_PATH        SQLite database, default bankferry.db\n")
-	stderr("  DRY_RUN              fetch writes nothing unless this is exactly \"false\"\n")
-	stderr("  GNUCASH_FILE         Default for learn --gnucash\n")
+	stderr("  OFX_OUTPUT_DIR          fetch writes to unmapped/ beneath it; map writes mapped/\n")
+	stderr("  DATABASE_PATH           SQLite database, default bankferry.db\n")
+	stderr("  DRY_RUN                 fetch writes nothing unless this is exactly \"false\"\n")
+	stderr("  GNUCASH_FILE            Default for learn --gnucash\n")
 }
 
 func bankferryFirstRunUsage() {

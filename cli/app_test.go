@@ -71,3 +71,33 @@ func TestApp_ValidateRejectsAnIncompleteIdentity(t *testing.T) {
 		}
 	}
 }
+
+// brokerferry's identity must be its own in every field that namespaces
+// state, or the two programs would share a keyring, a vault, or a database.
+func TestBrokerferry_IdentityIsDisjointFromBankferry(t *testing.T) {
+	a, b := Bankferry(), Brokerferry()
+	if err := b.validate(); err != nil {
+		t.Fatalf("Brokerferry() does not validate: %v", err)
+	}
+	if b.Name != "brokerferry" {
+		t.Errorf("Name = %q", b.Name)
+	}
+	if b.KeyringService == a.KeyringService {
+		t.Error("the two programs share a keyring service")
+	}
+	if b.RelyingParty.ID == a.RelyingParty.ID {
+		t.Error("the two programs share a relying party")
+	}
+	if b.DefaultDBPath == a.DefaultDBPath {
+		t.Error("the two programs share a default database")
+	}
+	if b.Link.ClientName == a.Link.ClientName {
+		t.Error("the two programs share a Link client name")
+	}
+	if len(b.Link.Products) != 1 || b.Link.Products[0].String() != "investments" {
+		t.Errorf("Link.Products = %v, want [investments]", b.Link.Products)
+	}
+	if len(b.Commands) != 1 || b.Commands[0].Name != "investments" {
+		t.Errorf("Commands = %v", b.Commands)
+	}
+}

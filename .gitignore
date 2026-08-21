@@ -50,6 +50,15 @@ go.work.sum
 # writes to mapped/ beneath it). Local financial data — never published.
 /ofx_output/
 
+# brokerferry's investments snapshots (INVESTMENTS_OUTPUT_DIR default). They hold
+# real account names, balances and holdings — never published.
+/investments_output/
+*.pb
+
+# The two binaries' local databases and the extensionless brokerferry build.
+/[Bb]roker[Ff]erry.db*
+/brokerferry
+
 # Encrypted credential backups and exports — local only, never published.
 *.encryptedBackup
 *.tapb
