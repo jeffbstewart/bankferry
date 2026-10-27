@@ -32,11 +32,23 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The Linux build excludes the windows-tagged code -- wincred, the
+      # winwebauthn FFI, x/sys/windows -- so a scan on this runner's own
+      # GOOS would never see it.  govulncheck honors GOOS for the
+      # analysis, and the Windows build is the one the operator runs and
+      # the gate in ci.yml tests on windows-latest, so the scan analyzes
+      # that build.  (It is not a strict superset: keyring's dbus and
+      # libsecret backends are Linux-only.)  The tool itself must be
+      # built for the host, hence go install rather than GOOS=windows go
+      # run, which would cross-compile govulncheck and fail to exec it.
+      # The install sits before set +e so a failed install fails the
+      # step loudly; the status capture wraps the scan alone.
       - name: govulncheck
         id: scan
         run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           set +e
-          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./... > vulns.txt 2>&1
+          GOOS=windows "$(go env GOPATH)/bin/govulncheck" ./... > vulns.txt 2>&1
           echo "status=$?" >> "$GITHUB_OUTPUT"
           cat vulns.txt
 
