@@ -74,8 +74,8 @@ recovers nothing and costs one of the ten.
 
 But it was wrong as an absolute, and `--duplicate-of <item id>` is the escape hatch: it names
 the existing Item the new one will sit beside, and `permitsDuplicate` honors it only when the
-named Item is among *that institution's* Items, so a permission to duplicate Capital One
-cannot license a second Chase picked by mistake in the browser. `plaid.FindItemsByInstitution`
+named Item is among *that institution's* Items, so a permission to duplicate Bank A
+cannot license a second Bank B picked by mistake in the browser. `plaid.FindItemsByInstitution`
 returns every match, never the first: with two Items at one institution, picking one by
 keyring order would be arbitrary.
 
@@ -343,7 +343,7 @@ discriminator to the filename rather than weakening any of the above.
 
 Console output identifies accounts by name *and* mask (`cli.accountLabel`), and Items by
 institution *and* item ID (`cli.itemLabel`). Neither name identifies anything on its own:
-Chase calls every credit card "CREDIT", and two logins at one bank are two Items with the
+Some banks call every credit card "CREDIT", and two logins at one bank are two Items with the
 same institution name.
 
 ### Investments numbers are carried verbatim

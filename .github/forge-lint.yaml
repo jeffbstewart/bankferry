@@ -1,5 +1,5 @@
-# forge-lint configuration for this repository (cloister
-# docs/grange.md R1-R8).  Identities and expectations only — the
+# forge-lint configuration for this repository (forge-lint
+# docs/requirements.md R1-R8).  Identities and expectations only — the
 # credential rides the FORGE_LINT_TOKEN env var, never this file.  It
 # lives under .github/ so the CODEOWNERS guard covers the pinned
 # identities themselves.  Every field is required.
