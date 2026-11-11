@@ -59,7 +59,7 @@ byte-identical to what is committed.
 
 | Proto field | Plaid source | Notes |
 |---|---|---|
-| `ItemSnapshot.institution_entry` | institution name for the Item | e.g. `"Vanguard"` |
+| `ItemSnapshot.institution_entry` | institution name for the Item | e.g. `"Brokerage A"` |
 | `ItemSnapshot.item_ref` | `item_id` | opaque; **never** the access token |
 | `Account.account_ref` | `account_id` | opaque, stable — finance2 keys its account links on it |
 | `Account.name` / `official_name` / `mask` | same-named account fields | mask is the human's matching aid in finance2's link UI |

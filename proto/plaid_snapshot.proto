@@ -30,7 +30,7 @@ message InvestmentsSnapshot {
 }
 
 message ItemSnapshot {
-  string institution_entry = 1; // Plaid institution name, e.g. "Vanguard"
+  string institution_entry = 1; // Plaid institution name, e.g. "Brokerage A"
   string item_ref = 2;          // opaque, stable per item — never the access token
   repeated Account accounts = 3;
 }

@@ -36,7 +36,7 @@ Sandbox works end to end. Production is reachable only through a security key.
 - The security-key cryptography now lives in
   [`github.com/jeffbstewart/touchvault`](https://github.com/jeffbstewart/touchvault),
   extracted from this repository and consumed as a dependency.
-- Chase, the account this was written for, **works through Plaid**: it links over OAuth,
+- The bank this was written for **works through Plaid**: it links over OAuth,
   and a fetch pulled its full history. Earlier aggregators never returned usable data for
   it — that was the open question the whole tool waited on, and Plaid resolved it.
 
@@ -65,17 +65,18 @@ targets Windows.
 
 Sandbox works out of the box. **Production is not plug-and-play.** Linking a real bank
 through Plaid's OAuth flow needs the browser to reach a callback URL Plaid has on file,
-over trusted HTTPS, and this tool was built for one specific setup:
+over trusted HTTPS, and this tool assumes:
 
 - **A registered HTTPS redirect URI.** Plaid rejects an unregistered one, and OAuth
-  institutions — Chase among them — will not complete without it. You give `plaid-link` only
-  the host (`--redirect-host myfoo.mydomain.com`, or `PLAID_REDIRECT_HOST`); the URI is always
-  `https://<host>/oauth-return`, and that exact string is what you register in the Dashboard.
-- **Dynamic DNS, a reverse proxy (HAProxy), and a wildcard TLS certificate.** The loopback
-  link server is fronted by HAProxy under a name covered by a wildcard cert, so the browser
-  reaches a trusted HTTPS origin that forwards to the local server. Plaid never fetches the
-  redirect URI — only your browser does (see [Security model](#security-model)) — so it
-  need not face the internet, but it must be HTTPS and trusted.
+  institutions — the bank this was written for among them — will not complete without it.
+  You give `plaid-link` only the host (`--redirect-host myfoo.mydomain.com`, or
+  `PLAID_REDIRECT_HOST`); the URI is always `https://<host>/oauth-return`, and that exact
+  string is what you register in the Dashboard.
+- **A public HTTPS URL that reaches the local link server during the OAuth handshake**
+  (any reverse proxy or tunnel will do). The browser must land on a trusted HTTPS origin
+  that forwards to the loopback link server. Plaid never fetches the redirect URI — only
+  your browser does (see [Security model](#security-model)) — so it need not face the
+  internet, but it must be HTTPS and trusted.
 - **A modern FIDO2 security key** with `hmac-secret` support, to hold the production API
   secret — and, for now, **Windows**, because the security-key path supports only Windows
   (see [Platform support](#platform-support)).
@@ -86,8 +87,8 @@ If that is more than you want to run, two walk-backs keep the rest useful:
   the keyring, the way sandbox already is. You lose the touch-to-read guarantee but keep the
   fetch → map → GnuCash pipeline intact.
 - **Self-host TLS instead of a public cert.** Run your own CA, install its root in the
-  browser, and issue a loopback certificate — no dynamic DNS or HAProxy, at the cost of one
-  browser trust-store edit.
+  browser, and issue a loopback certificate — no public URL or reverse proxy, at the cost of
+  one browser trust-store edit.
 
 ## Build
 

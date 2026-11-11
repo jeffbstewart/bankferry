@@ -116,7 +116,7 @@ func TestMatch_MerchantField(t *testing.T) {
 	m := newMatcher(t, testPayees, rules)
 
 	// Cryptic raw, clean merchant. The merchant-keyed rule catches it.
-	got := m.Match("MOISON ACE HDWE", "Ace Hardware")
+	got := m.Match("SMITHS ACE HDWE", "Ace Hardware")
 	if !got.Matched() || got.Payee.Name != "Ace Hardware" {
 		t.Fatalf("merchant match = %+v, want Ace Hardware", got)
 	}
@@ -127,9 +127,10 @@ func TestMatch_MerchantField(t *testing.T) {
 	}
 }
 
-// Raw-keyed rules outrank merchant-keyed rules: the Crack'd case. Plaid
-// mislabels the raw "CRACKD" as merchant "Cracker Barrel"; a raw rule on
-// CRACKD must win over any merchant rule.
+// Raw-keyed rules outrank merchant-keyed rules. A provider can resolve a
+// terse raw descriptor to the wrong merchant -- here the raw "CRACKD" comes
+// back as merchant "Cracker Barrel", a different business -- so a raw rule
+// on CRACKD must win over any merchant rule.
 func TestMatch_RawBeatsMerchant(t *testing.T) {
 	rules := []Rule{
 		{ID: 1, PayeeID: 4, Pattern: "CRACKD", Field: MatchRaw, Priority: 10},
@@ -137,7 +138,7 @@ func TestMatch_RawBeatsMerchant(t *testing.T) {
 	}
 	m := newMatcher(t, testPayees, rules)
 
-	got := m.Match("CRACKD 02 - BURLINGT", "Cracker Barrel")
+	got := m.Match("CRACKD 02 - SPRINGF", "Cracker Barrel")
 	if got.Payee.Name != "Crack'd" {
 		t.Errorf("Name = %q, want Crack'd (raw beats merchant)", got.Payee.Name)
 	}

@@ -79,7 +79,7 @@ type Transaction struct {
 
 	Date civildate.ISO8601Date
 
-	// Description is the raw bank descriptor, e.g. "MOISON ACE HDWE". It is
+	// Description is the raw bank descriptor, e.g. "SMITHS ACE HDWE". It is
 	// immutable ground truth and the primary key for payee rules.
 	Description string
 

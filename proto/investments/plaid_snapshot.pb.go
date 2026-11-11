@@ -101,7 +101,7 @@ func (x *InvestmentsSnapshot) GetItems() []*ItemSnapshot {
 
 type ItemSnapshot struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	InstitutionEntry string                 `protobuf:"bytes,1,opt,name=institution_entry,json=institutionEntry,proto3" json:"institution_entry,omitempty"` // Plaid institution name, e.g. "Vanguard"
+	InstitutionEntry string                 `protobuf:"bytes,1,opt,name=institution_entry,json=institutionEntry,proto3" json:"institution_entry,omitempty"` // Plaid institution name, e.g. "Brokerage A"
 	ItemRef          string                 `protobuf:"bytes,2,opt,name=item_ref,json=itemRef,proto3" json:"item_ref,omitempty"`                            // opaque, stable per item — never the access token
 	Accounts         []*Account             `protobuf:"bytes,3,rep,name=accounts,proto3" json:"accounts,omitempty"`
 	unknownFields    protoimpl.UnknownFields

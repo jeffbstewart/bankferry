@@ -1,4 +1,4 @@
-# Code owners (cloister docs/grange.md R2, R6).  With
+# Code owners (forge-lint docs/requirements.md R2, R6).  With
 # require-code-owner-review on the main ruleset, ONLY an owner's approval
 # satisfies the review rule — the bot's approval is worthless by
 # construction.  The .github rule keeps workflow changes (agent-editable

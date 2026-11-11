@@ -18,7 +18,7 @@ import (
 // a float64 would not keep.
 const holdingsFixture = `{
   "accounts": [{
-    "account_id": "acct_roth", "name": "Roth IRA", "official_name": "Vanguard Roth IRA",
+    "account_id": "acct_roth", "name": "Roth IRA", "official_name": "Example Brokerage Roth IRA",
     "mask": "4321", "type": "investment", "subtype": "roth",
     "balances": {"current": 23631.9805, "available": 1200.50, "limit": null,
                  "iso_currency_code": "USD", "unofficial_currency_code": null}
@@ -86,7 +86,7 @@ func TestFetchHoldings_KeepsEveryLiteralVerbatim(t *testing.T) {
 	if roth.Available == nil || roth.Available.Value != "1200.50" {
 		t.Errorf("roth available = %+v; trailing zero must survive", roth.Available)
 	}
-	if roth.OfficialName != "Vanguard Roth IRA" || roth.Mask != "4321" || roth.Subtype != "roth" {
+	if roth.OfficialName != "Example Brokerage Roth IRA" || roth.Mask != "4321" || roth.Subtype != "roth" {
 		t.Errorf("roth = %+v", roth)
 	}
 	brk := res.Accounts[1]

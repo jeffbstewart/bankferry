@@ -638,7 +638,7 @@ func sanitizeHost(host string) string {
 // already linked at this institution.
 //
 // Matching against *this institution's* Items is the point. A permission to
-// duplicate Capital One must not license linking Chase a second time when
+// duplicate Bank A must not license linking Bank B a second time when
 // the operator picks the wrong bank in the browser, and that misclick is the
 // mistake the guard exists for.
 func permitsDuplicate(existing []Item, allowDuplicateOf string) bool {

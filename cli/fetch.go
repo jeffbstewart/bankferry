@@ -162,7 +162,7 @@ func pathExists(path string) (bool, error) {
 //
 // The institution name alone does not identify one. An Item is one login, so
 // two logins at a bank are two Items with the same name, and a run that
-// printed "Capital One" twice would leave the operator unable to tell which
+// printed "Bank A" twice would leave the operator unable to tell which
 // one reported what. The item ID is also the value --item wants.
 func itemLabel(item plaid.Item) string {
 	return fmt.Sprintf("%s (item %s)", item.InstitutionName, item.ItemID)
@@ -171,7 +171,7 @@ func itemLabel(item plaid.Item) string {
 // accountLabel names an account in console output.
 //
 // The name alone does not identify one: Plaid passes through whatever the
-// bank calls the account, and Chase calls every credit card "CREDIT", so two
+// bank calls the account, and some banks call every credit card "CREDIT", so two
 // cards on one login print identically. The mask disambiguates them. It is
 // the last 2 to 4 characters of the account number, and is occasionally
 // absent, in which case the name is all there is.
